@@ -1,0 +1,188 @@
+:root {
+  /* Mixed Migration Centre official colour palette */
+  --mmc-navy: #003d58;
+  --mmc-teal: #00a2a5;
+  --mmc-light-teal: #afdfe4;
+  --mmc-pale-teal: #d5eef0;
+  --mmc-yellow: #ffe07c;
+  --mmc-mauve: #b88aab;
+  --mmc-lime: #bbd876;
+  --mmc-orange: #fbbc75;
+  --mmc-coral: #f8ab9e;
+  --mmc-green: #5b9e62;
+  --mmc-blue: #009bd9;
+  --mmc-red: #f15b5b;
+  --mmc-plum: #63193b;
+}
+
+body {
+  color: var(--mmc-navy);
+  background-color: #fff;
+  font-family: Arial, Helvetica, sans-serif;
+}
+
+.app-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 24px;
+  margin-bottom: 24px;
+  padding: 20px 0 12px;
+  border-bottom: 4px solid var(--mmc-teal);
+}
+
+.app-logo {
+  display: block;
+  flex: 0 0 auto;
+  width: auto;
+  max-width: min(100%, 120px);
+  height: auto;
+}
+
+.app-header > h2 {
+  min-width: 0;
+  margin: 0;
+}
+
+h1,
+h2,
+h3,
+h4,
+h5,
+h6,
+.control-label {
+  color: var(--mmc-navy);
+}
+
+@media (max-width: 600px) {
+  .app-header {
+    gap: 12px;
+  }
+
+  .app-logo {
+    max-width: 90px;
+  }
+
+  .app-header > h2 {
+    font-size: 24px;
+  }
+}
+
+.well {
+  background-color: var(--mmc-pale-teal);
+  border: 0;
+  border-radius: 4px;
+  box-shadow: none;
+}
+
+.btn-default,
+.btn-primary {
+  color: #fff;
+  background-color: var(--mmc-navy);
+  border-color: var(--mmc-navy);
+}
+
+.btn-default:hover,
+.btn-default:focus,
+.btn-default:active,
+.btn-primary:hover,
+.btn-primary:focus,
+.btn-primary:active {
+  color: #fff;
+  background-color: var(--mmc-teal);
+  border-color: var(--mmc-teal);
+}
+
+.form-control:focus {
+  border-color: var(--mmc-teal);
+  box-shadow: 0 0 0 2px rgb(0 162 165 / 20%);
+}
+
+a {
+  color: var(--mmc-blue);
+}
+
+a:hover,
+a:focus {
+  color: var(--mmc-navy);
+}
+
+.status-message {
+  margin-bottom: 20px;
+  padding: 12px 16px;
+  background-color: var(--mmc-pale-teal);
+  border-left: 4px solid var(--mmc-teal);
+  border-radius: 3px;
+}
+
+.status-success {
+  background-color: #eff7f0;
+  border-left-color: var(--mmc-green);
+}
+
+.status-error {
+  color: var(--mmc-plum);
+  background-color: #feeeee;
+  border-left-color: var(--mmc-red);
+}
+
+.dataset-section {
+  margin-bottom: 28px;
+}
+
+.dataset-section h3 {
+  padding-bottom: 6px;
+  border-bottom: 2px solid var(--mmc-light-teal);
+}
+
+.table-scroll {
+  max-width: 100%;
+  overflow-x: auto;
+}
+
+.table > thead > tr > th {
+  color: #fff;
+  background-color: var(--mmc-navy);
+  border-bottom: 0;
+}
+
+/* Palette utility classes for app components added later. */
+.mmc-bg-navy {
+  background-color: var(--mmc-navy);
+}
+.mmc-bg-teal {
+  background-color: var(--mmc-teal);
+}
+.mmc-bg-light-teal {
+  background-color: var(--mmc-light-teal);
+}
+.mmc-bg-pale-teal {
+  background-color: var(--mmc-pale-teal);
+}
+.mmc-bg-yellow {
+  background-color: var(--mmc-yellow);
+}
+.mmc-bg-mauve {
+  background-color: var(--mmc-mauve);
+}
+.mmc-bg-lime {
+  background-color: var(--mmc-lime);
+}
+.mmc-bg-orange {
+  background-color: var(--mmc-orange);
+}
+.mmc-bg-coral {
+  background-color: var(--mmc-coral);
+}
+.mmc-bg-green {
+  background-color: var(--mmc-green);
+}
+.mmc-bg-blue {
+  background-color: var(--mmc-blue);
+}
+.mmc-bg-red {
+  background-color: var(--mmc-red);
+}
+.mmc-bg-plum {
+  background-color: var(--mmc-plum);
+}
