@@ -11,6 +11,12 @@ ui <- fluidPage(
         accept = c(".csv", ".xlsx")
       ),
 
+      fileInput(
+        "loa",
+        "Upload List of Analysis",
+        accept = c(".csv", ".xlsx")
+      ),
+
       checkboxGroupInput(
         "analyses",
         "Select analyses",
