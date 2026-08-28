@@ -471,3 +471,15 @@ a:focus {
   margin-top: 4px;
   color: var(--mmc-navy);
 }
+
+/* --------------------------------------------------------------------------
+   Template link and result download
+   -------------------------------------------------------------------------- */
+.ak-template {
+  margin: -8px 0 18px;
+  font-size: 13px;
+}
+
+.ak-download {
+  margin-bottom: 14px;
+}
