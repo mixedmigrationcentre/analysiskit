@@ -442,3 +442,105 @@ test_that("a blocked workbook writes nothing to the destination", {
     expect_equal(length(list.files(destination)), 0L)
   })
 })
+
+test_that("served, the app asks for no folder and settles the destination itself", {
+  skip_without_app()
+
+  withr::with_options(list(analysiskit.server = TRUE), {
+    shiny::testServer(app_dir, {
+      session$setInputs(dataset = upload(dataset_file()))
+      session$setInputs(loa = upload(loa_file()))
+
+      # No folder was chosen, and none can be: the run is still offered.
+      expect_false(destination_mode$pick_folder)
+      expect_equal(step_states()[["destination"]], "done")
+      expect_true(ak_can_run(step_states()))
+
+      # The picker is not rendered at all, rather than shown and ignored.
+      expect_equal(trimws(ui_text(output$folder_control)), "")
+      expect_match(ui_text(output$folder_status), "running on a server")
+      expect_match(ui_text(output$folder_status), "download")
+    })
+  })
+})
+
+test_that("served, the workbook is built in the session temp folder and offered as a download", {
+  skip_without_app()
+  skip_if_not(
+    exists("run_group_analysis_pipeline", mode = "function"),
+    "analysis functions are not in the repository yet"
+  )
+  skip_if_not_installed("openxlsx")
+
+  withr::with_options(list(analysiskit.server = TRUE), {
+    shiny::testServer(app_dir, {
+      session$setInputs(dataset = upload(dataset_file(fixture_dataset(40))))
+      session$setInputs(loa = upload(loa_file()))
+      session$setInputs(run = 1)
+
+      expect_null(run_error())
+      expect_true(file.exists(saved_path()))
+      # Nowhere the user might mistake for storage.
+      expect_true(
+        startsWith(normalizePath(dirname(saved_path())), normalizePath(tempdir()))
+      )
+
+      expect_match(ui_text(output$download_control), "Download the results workbook")
+      expect_match(ui_text(output$results_status), "Download")
+      expect_match(output$results_summary, "use the download button", fixed = TRUE)
+    })
+  })
+})
+
+test_that("the download is offered locally too, alongside the saved copy", {
+  skip_without_app()
+  skip_if_not(
+    exists("run_group_analysis_pipeline", mode = "function"),
+    "analysis functions are not in the repository yet"
+  )
+
+  destination <- temp_destination()
+
+  withr::with_options(list(analysiskit.server = FALSE), {
+    shiny::testServer(app_dir, {
+      session$setInputs(dataset = upload(dataset_file(fixture_dataset(40))))
+      session$setInputs(loa = upload(loa_file()))
+      session$setInputs(folder = pick_folder(destination))
+      session$setInputs(run = 1)
+
+      expect_equal(dirname(saved_path()), destination)
+      expect_match(ui_text(output$download_control), "Download the results workbook")
+    })
+  })
+})
+
+test_that("nothing is offered for download before a run has produced anything", {
+  skip_without_app()
+
+  shiny::testServer(app_dir, {
+    session$setInputs(dataset = upload(dataset_file()))
+    session$setInputs(loa = upload(loa_file()))
+
+    expect_equal(trimws(ui_text(output$download_control)), "")
+  })
+})
+
+test_that("the List of Analysis template is downloadable from the app", {
+  skip_without_app()
+
+  # The link is the only route to the template for anyone using a deployed
+  # copy, who has no access to the repository.
+  expect_true(file.exists(file.path(app_dir, "docs", "loa_template.xlsx")))
+
+  shiny::testServer(app_dir, {
+    # testServer runs the handler and hands back the path it wrote to.
+    written <- output$template
+
+    expect_true(file.exists(written))
+    expect_equal(basename(written), "analysiskit_loa_template.xlsx")
+    expect_gt(file.size(written), 5000)
+
+    skip_if_not_installed("readxl")
+    expect_true("analysis" %in% readxl::excel_sheets(written))
+  })
+})

@@ -1,0 +1,24 @@
+# Files rsconnect must never upload.
+#
+# R/manifest.R
+R/generate_manifest.R
+generate_manifest.R passes an explicit file list to writeManifest(), so this
+# is the belt-and-braces for anyone who deploys straight from the RStudio button
+# or with rsconnect::deployApp() instead.
+#
+# .RData and .Rhistory are the reason this file exists: they are an R session's
+# saved workspace and command history. If a dataset was loaded when the
+# workspace was written, deploying the directory uploads respondent data to a
+# hosted server.
+.RData
+.Rhistory
+.Rproj.user
+.git
+.gitignore
+tests
+outputs
+docs/loa-schema.md
+R/manifest.R
+R/generate_manifest.R
+generate_manifest.R
+manifest.json

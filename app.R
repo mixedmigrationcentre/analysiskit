@@ -9,7 +9,12 @@
 # from CRAN and stops with the exact command for anything it will not install
 # on your behalf. See R/setup_packages.R for what is needed and why.
 source("R/setup_packages.R")
-ak_ensure_packages()
+source("R/deployment.R")
+
+# Nothing is installed on a served deployment: the library there is built from
+# manifest.json before the app starts, and is read-only once it is running, so
+# an install attempt would only waste time and fail confusingly.
+ak_ensure_packages(install = !ak_is_server())
 ak_attach_packages()
 
 options(shiny.maxRequestSize = 100 * 1024^2)
@@ -55,14 +60,13 @@ ui <- fluidPage(
         accept = c(".csv", ".xlsx")
       ),
       tags$div(
+        class = "ak-template",
+        downloadLink("template", "Download the List of Analysis template")
+      ),
+      tags$div(
         class = "ak-destination",
         tags$label(class = "control-label", "Output folder"),
-        shinyFiles::shinyDirButton(
-          "folder",
-          label = "Choose folder...",
-          title = "Select the folder to save the results workbook into",
-          class = "btn-default"
-        ),
+        uiOutput("folder_control"),
         uiOutput("folder_status")
       ),
       uiOutput("run_control"),
@@ -112,7 +116,11 @@ ui <- fluidPage(
           uiOutput("results_status"),
           conditionalPanel(
             condition = "output.resultsReady",
-            ak_section("Analyses run", tableOutput("results_summary")),
+            ak_section(
+              "Analyses run",
+              uiOutput("download_control"),
+              tableOutput("results_summary")
+            ),
             ak_section(
               "Results preview",
               div(class = "table-scroll", tableOutput("results_preview"))
@@ -236,10 +244,30 @@ server <- function(input, output, session) {
   # and a download handler would be the right answer instead.
   # ---------------------------------------------------------------------------
 
+  destination_mode <- ak_destination_mode()
+
   volumes <- c(Home = path.expand("~"), shinyFiles::getVolumes()())
   shinyFiles::shinyDirChoose(input, "folder", roots = volumes, session = session)
 
+  output$folder_control <- renderUI({
+    if (!destination_mode$pick_folder) {
+      return(tagList())
+    }
+    shinyFiles::shinyDirButton(
+      "folder",
+      label = "Choose folder...",
+      title = "Select the folder to save the results workbook into",
+      class = "btn-default"
+    )
+  })
+
   output_folder <- reactive({
+    # Served, there is no folder of the user's to write into, so the workbook is
+    # built in a session temp folder and reaches them as a download.
+    if (!destination_mode$pick_folder) {
+      return(ak_session_output_dir())
+    }
+
     chosen <- shinyFiles::parseDirPath(volumes, input$folder)
     if (length(chosen) == 0 || !nzchar(chosen)) NULL else as.character(chosen)
   })
@@ -249,13 +277,48 @@ server <- function(input, output, session) {
   })
 
   output$folder_status <- renderUI({
+    if (!destination_mode$pick_folder) {
+      return(ak_status(destination_mode$explanation))
+    }
     if (is.null(output_folder())) {
-      return(ak_status("No folder chosen yet. Results are saved here when the run finishes."))
+      return(ak_status(destination_mode$explanation))
     }
     if (!is.null(folder_problem())) {
       return(ak_status(folder_problem(), "error"))
     }
     ak_status(paste0("Saving to ", output_folder()), "success")
+  })
+
+  # ---------------------------------------------------------------------------
+  # Downloads
+  # ---------------------------------------------------------------------------
+
+  output$template <- downloadHandler(
+    filename = "analysiskit_loa_template.xlsx",
+    content = function(file) {
+      template <- "docs/loa_template.xlsx"
+      validate(need(file.exists(template), "The template is missing from docs/."))
+      file.copy(template, file, overwrite = TRUE)
+    }
+  )
+
+  output$results_file <- downloadHandler(
+    filename = function() basename(saved_path()),
+    content = function(file) file.copy(saved_path(), file, overwrite = TRUE)
+  )
+
+  # Offered wherever the app runs: served it is the only way the workbook
+  # reaches the user, and locally it is a convenience next to the saved copy.
+  output$download_control <- renderUI({
+    # An empty tagList rather than req(): there is simply nothing to download
+    # yet, which is a state to render, not a condition to abort on.
+    if (is.null(saved_path())) {
+      return(tagList())
+    }
+    tags$div(
+      class = "ak-download",
+      downloadButton("results_file", "Download the results workbook", class = "btn-primary")
+    )
   })
 
   # ---------------------------------------------------------------------------
@@ -271,7 +334,8 @@ server <- function(input, output, session) {
       loa_loaded = loa_ok(),
       loa_failed = !is.null(input$loa) && !loa_ok(),
       problems = if (dataset_ok() && loa_ok()) loa_problems() else NULL,
-      destination_chosen = !is.null(output_folder()) && is.null(folder_problem()),
+      destination_chosen = destination_mode$settled ||
+        (!is.null(output_folder()) && is.null(folder_problem())),
       destination_failed = !is.null(folder_problem()),
       results_ready = !is.null(analysis_results()),
       running = running()
@@ -305,10 +369,17 @@ server <- function(input, output, session) {
     }
     if (!is.null(saved_path())) {
       return(ak_status(
-        sprintf(
-          "Analyses complete. Saved as %s in %s.",
-          basename(saved_path()), dirname(saved_path())
-        ),
+        if (destination_mode$pick_folder) {
+          sprintf(
+            "Analyses complete. Saved as %s in %s.",
+            basename(saved_path()), dirname(saved_path())
+          )
+        } else {
+          sprintf(
+            "Analyses complete. Download %s from the Results tab.",
+            basename(saved_path())
+          )
+        },
         "success"
       ))
     }
@@ -496,6 +567,9 @@ server <- function(input, output, session) {
     if (identical(unname(states[["destination"]]), "active")) {
       return(ak_status("Choose an output folder to enable the run."))
     }
+    if (!destination_mode$pick_folder && ak_can_run(states)) {
+      return(ak_status(destination_mode$explanation))
+    }
     if (!ak_can_run(states)) {
       return(ak_status("Upload both files and clear any problems to run."))
     }
@@ -653,9 +727,14 @@ server <- function(input, output, session) {
     results <- analysis_results()
     ak_status(
       sprintf(
-        "Produced %d rows and %d columns. Saved as %s in %s.",
+        if (destination_mode$pick_folder) {
+          "Produced %d rows and %d columns. Saved as %s in %s."
+        } else {
+          "Produced %d rows and %d columns. Download %s using the button above.%s"
+        },
         nrow(results$combined_results), ncol(results$combined_results),
-        basename(saved_path()), dirname(saved_path())
+        basename(saved_path()),
+        if (destination_mode$pick_folder) dirname(saved_path()) else ""
       ),
       "success"
     )
@@ -667,13 +746,20 @@ server <- function(input, output, session) {
 
     data.frame(
       Measure = c(
-        "Saved as", "Folder", "Result rows", "Result columns",
+        "Saved as", if (destination_mode$pick_folder) "Folder" else "Location",
+        "Result rows", "Result columns",
         "Grouping variables", "Selection counts", "Choice combinations",
         "Excluded choices"
       ),
       Value = c(
         if (is.null(saved_path())) "not saved" else basename(saved_path()),
-        if (is.null(saved_path())) "-" else dirname(saved_path()),
+        if (is.null(saved_path())) {
+          "-"
+        } else if (destination_mode$pick_folder) {
+          dirname(saved_path())
+        } else {
+          "on the server - use the download button above"
+        },
         format(nrow(results$combined_results), big.mark = ","),
         format(ncol(results$combined_results), big.mark = ","),
         format(length(unique(stats::na.omit(results$column_map$group_variable)))),
