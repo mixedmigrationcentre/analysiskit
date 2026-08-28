@@ -27,15 +27,15 @@ ui <- fluidPage(
         "Upload List of Analysis",
         accept = c(".csv", ".xlsx")
       ),
-      checkboxGroupInput(
-        "analyses",
-        "Select analyses",
-        choices = c(
-          "Analysis 1" = "analysis_01",
-          "Analysis 2" = "analysis_02",
-          "Analysis 3" = "analysis_03"
-        )
-      ),
+      # checkboxGroupInput(
+      #   "analyses",
+      #   "Select analyses",
+      #   choices = c(
+      #     "Analysis 1" = "analysis_01",
+      #     "Analysis 2" = "analysis_02",
+      #     "Analysis 3" = "analysis_03"
+      #   )
+      # ),
       actionButton(
         "run",
         "Run analyses"
@@ -72,7 +72,10 @@ server <- function(input, output, session) {
     tryCatch(
       read_uploaded_dataset(input$dataset),
       error = function(error) {
-        structure(list(message = conditionMessage(error)), class = "dataset_error")
+        structure(
+          list(message = conditionMessage(error)),
+          class = "dataset_error"
+        )
       }
     )
   })
@@ -85,7 +88,10 @@ server <- function(input, output, session) {
 
   output$status <- renderUI({
     if (is.null(input$dataset)) {
-      return(div(class = "status-message", "Upload a CSV or XLSX dataset to inspect it."))
+      return(div(
+        class = "status-message",
+        "Upload a CSV or XLSX dataset to inspect it."
+      ))
     }
 
     result <- uploaded_dataset()
