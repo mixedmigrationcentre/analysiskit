@@ -53,7 +53,15 @@ test_that("a fully populated workbook binds to the pipeline's real signature", {
       chr = if (setting == "weight_column") "weight" else "x",
       `chr[]` = "stat,n,n_total",
       lgl = "TRUE",
-      num = "1",
+      num = switch(
+        setting,
+        # Blanket "1" would set max_combination_choices to 1, which the real
+        # ck_check_choice_combinations() rightly rejects for a two-choice
+        # question. Each numeric setting gets a value that is valid for it.
+        fallback_level = "0.95",
+        max_combination_choices = "6",
+        "1"
+      ),
       enum = strsplit(values, ",", fixed = TRUE)[[1]][1]
     )
   }

@@ -14,7 +14,7 @@
 # =============================================================================
 
 
-#' The Four Steps of the Workflow
+#' The Steps of the Workflow
 #' @return A named character vector: step id to label.
 #' @keywords internal
 ak_steps <- function() {
@@ -22,6 +22,7 @@ ak_steps <- function() {
     dataset = "Dataset",
     loa = "List of Analysis",
     checks = "Checks",
+    destination = "Destination",
     results = "Results"
   )
 }
@@ -35,6 +36,7 @@ ak_steps <- function() {
 #' @param dataset_loaded,dataset_failed State of the dataset upload.
 #' @param loa_loaded,loa_failed State of the List of Analysis upload.
 #' @param problems The problems table, or `NULL` when the checks have not run.
+#' @param destination_chosen,destination_failed State of the output folder.
 #' @param results_ready Logical. Results exist.
 #' @param running Logical. An analysis is in progress.
 #' @return A named character vector of `"todo"`, `"active"`, `"done"`,
@@ -45,9 +47,14 @@ ak_step_states <- function(dataset_loaded = FALSE,
                            loa_loaded = FALSE,
                            loa_failed = FALSE,
                            problems = NULL,
+                           destination_chosen = FALSE,
+                           destination_failed = FALSE,
                            results_ready = FALSE,
                            running = FALSE) {
-  states <- c(dataset = "todo", loa = "todo", checks = "todo", results = "todo")
+  states <- c(
+    dataset = "todo", loa = "todo", checks = "todo",
+    destination = "todo", results = "todo"
+  )
 
   states[["dataset"]] <- if (dataset_failed) {
     "error"
@@ -77,11 +84,24 @@ ak_step_states <- function(dataset_loaded = FALSE,
     }
   }
 
+  # The folder is only asked for once there is something worth saving: offering
+  # it before the checks pass invites the user to answer a question that may
+  # turn out not to matter.
+  if (states[["checks"]] %in% c("done", "warning")) {
+    states[["destination"]] <- if (destination_failed) {
+      "error"
+    } else if (destination_chosen) {
+      "done"
+    } else {
+      "active"
+    }
+  }
+
   states[["results"]] <- if (running) {
     "active"
   } else if (results_ready) {
     "done"
-  } else if (states[["checks"]] %in% c("done", "warning")) {
+  } else if (identical(states[["destination"]], "done")) {
     "active"
   } else {
     "todo"
@@ -92,13 +112,19 @@ ak_step_states <- function(dataset_loaded = FALSE,
 
 
 #' Can the Analysis Be Run
+#'
+#' Both files in, no fatal check, and somewhere to put the result. The
+#' destination is part of the gate because a run that cannot be saved wastes
+#' the wait.
+#'
 #' @param states A vector from \code{\link{ak_step_states}}.
-#' @return `TRUE` when both inputs are in and no check is fatal.
+#' @return `TRUE` when the run should be offered.
 #' @export
 ak_can_run <- function(states) {
   identical(unname(states[["dataset"]]), "done") &&
     identical(unname(states[["loa"]]), "done") &&
-    unname(states[["checks"]]) %in% c("done", "warning")
+    unname(states[["checks"]]) %in% c("done", "warning") &&
+    identical(unname(states[["destination"]]), "done")
 }
 
 

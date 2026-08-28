@@ -1,17 +1,27 @@
-library(shiny)
+# Analysis Kit - Mixed Migration Centre
+#
+# app.R assembles the interface and connects reactive behaviour. Reading,
+# validating, analysing and exporting all live in R/ and functions/, so nothing
+# in this file needs a running Shiny session to be understood or tested.
+
+# Packages first: a missing one should be a clear message on launch, not an
+# error halfway through a run. ak_ensure_packages() installs what is missing
+# from CRAN and stops with the exact command for anything it will not install
+# on your behalf. See R/setup_packages.R for what is needed and why.
+source("R/setup_packages.R")
+ak_ensure_packages()
+ak_attach_packages()
 
 options(shiny.maxRequestSize = 100 * 1024^2)
 
-# app.R assembles the interface and connects reactive behaviour. Reading,
-# validating and analysing all live in R/ and functions/, so nothing in this
-# file needs a running Shiny session to be understood or tested.
 source("R/read_dataset.R")
 source("R/read_loa.R")
 source("R/ui_components.R")
+source("R/export_results.R")
 
-# The analysis pipeline is not yet part of the repository. Sourcing whatever is
-# in functions/ means the Run step starts working the moment it lands there,
-# and reports honestly that it cannot run until then.
+# The analysis and export functions are sourced from functions/, so they can be
+# replaced without touching the app. If they are absent the interface says so
+# rather than pretending it can run.
 for (file in list.files("functions", pattern = "[.][Rr]$", full.names = TRUE)) {
   source(file)
 }
@@ -43,6 +53,17 @@ ui <- fluidPage(
         "loa",
         "Upload List of Analysis",
         accept = c(".csv", ".xlsx")
+      ),
+      tags$div(
+        class = "ak-destination",
+        tags$label(class = "control-label", "Output folder"),
+        shinyFiles::shinyDirButton(
+          "folder",
+          label = "Choose folder...",
+          title = "Select the folder to save the results workbook into",
+          class = "btn-default"
+        ),
+        uiOutput("folder_status")
       ),
       uiOutput("run_control"),
       uiOutput("run_hint")
@@ -95,7 +116,8 @@ ui <- fluidPage(
             ak_section(
               "Results preview",
               div(class = "table-scroll", tableOutput("results_preview"))
-            )
+            ),
+            ak_section("Run log", uiOutput("run_log"))
           )
         )
       )
@@ -206,6 +228,37 @@ server <- function(input, output, session) {
   })
 
   # ---------------------------------------------------------------------------
+  # Destination folder
+  #
+  # shinyFiles browses the filesystem the app is running on. Analysis Kit is
+  # launched on the analyst's own machine, so that is their filesystem - see
+  # docs/loa-schema.md. Served from a remote host it would browse the server,
+  # and a download handler would be the right answer instead.
+  # ---------------------------------------------------------------------------
+
+  volumes <- c(Home = path.expand("~"), shinyFiles::getVolumes()())
+  shinyFiles::shinyDirChoose(input, "folder", roots = volumes, session = session)
+
+  output_folder <- reactive({
+    chosen <- shinyFiles::parseDirPath(volumes, input$folder)
+    if (length(chosen) == 0 || !nzchar(chosen)) NULL else as.character(chosen)
+  })
+
+  folder_problem <- reactive({
+    if (is.null(output_folder())) NULL else ak_check_folder(output_folder())
+  })
+
+  output$folder_status <- renderUI({
+    if (is.null(output_folder())) {
+      return(ak_status("No folder chosen yet. Results are saved here when the run finishes."))
+    }
+    if (!is.null(folder_problem())) {
+      return(ak_status(folder_problem(), "error"))
+    }
+    ak_status(paste0("Saving to ", output_folder()), "success")
+  })
+
+  # ---------------------------------------------------------------------------
   # Progress tracker
   # ---------------------------------------------------------------------------
 
@@ -218,6 +271,8 @@ server <- function(input, output, session) {
       loa_loaded = loa_ok(),
       loa_failed = !is.null(input$loa) && !loa_ok(),
       problems = if (dataset_ok() && loa_ok()) loa_problems() else NULL,
+      destination_chosen = !is.null(output_folder()) && is.null(folder_problem()),
+      destination_failed = !is.null(folder_problem()),
       results_ready = !is.null(analysis_results()),
       running = running()
     )
@@ -243,6 +298,19 @@ server <- function(input, output, session) {
     }
     if (!loa_ok()) {
       return(ak_status(uploaded_loa()$message, "error"))
+    }
+
+    if (!is.null(run_error())) {
+      return(ak_status(run_error(), "error"))
+    }
+    if (!is.null(saved_path())) {
+      return(ak_status(
+        sprintf(
+          "Analyses complete. Saved as %s in %s.",
+          basename(saved_path()), dirname(saved_path())
+        ),
+        "success"
+      ))
     }
 
     counts <- ak_problem_counts(loa_problems())
@@ -424,7 +492,11 @@ server <- function(input, output, session) {
         "warning"
       ))
     }
-    if (!ak_can_run(step_states())) {
+    states <- step_states()
+    if (identical(unname(states[["destination"]]), "active")) {
+      return(ak_status("Choose an output folder to enable the run."))
+    }
+    if (!ak_can_run(states)) {
       return(ak_status("Upload both files and clear any problems to run."))
     }
     # An empty tagList rather than NULL: renderUI(NULL) reaches htmltools as
@@ -434,15 +506,22 @@ server <- function(input, output, session) {
 
   analysis_results <- reactiveVal(NULL)
   run_error <- reactiveVal(NULL)
+  run_log <- reactiveVal(character(0))
+  saved_path <- reactiveVal(NULL)
 
   # eventReactive/observeEvent rather than a plain reactive: uploading or
-  # editing an input must never silently rerun an expensive analysis.
+  # editing an input must never silently rerun an expensive analysis, and it
+  # must never silently write a file.
   observeEvent(input$run, {
     spec <- analysis_spec()
     dataset <- uploaded_dataset()$data
+    dataset_name <- uploaded_dataset()$filename
+    folder <- output_folder()
 
     analysis_results(NULL)
     run_error(NULL)
+    saved_path(NULL)
+    run_log(character(0))
     running(TRUE)
     on.exit(running(FALSE), add = TRUE)
 
@@ -454,20 +533,33 @@ server <- function(input, output, session) {
       return(invisible(NULL))
     }
 
-    withProgress(message = "Running analyses", value = 0, {
-      setProgress(
-        0.1,
-        detail = sprintf(
-          "%d analyses across %d grouping variable(s)",
-          nrow(spec$loa), length(spec$group_variables)
-        )
-      )
+    folder_issue <- ak_check_folder(folder)
+    if (!is.null(folder_issue)) {
+      run_error(folder_issue)
+      return(invisible(NULL))
+    }
 
-      # The pipeline reports its own progress through message(); routing those
-      # to the progress bar is what makes a long run legible rather than a
-      # frozen screen.
+    withProgress(message = "Running analyses", value = 0, {
+      setProgress(0.03, detail = sprintf(
+        "%d analyses across %d grouping variable(s)",
+        nrow(spec$loa), length(spec$group_variables)
+      ))
+
+      # The pipeline reports its own progress through message(). Those messages
+      # drive the bar and are kept as a run log: they carry the diagnostics an
+      # analyst needs to see - variables skipped, choices excluded, small groups
+      # set aside - which would otherwise vanish into the console.
+      #
+      # There is no reliable count of messages to divide by, so rather than
+      # invent a denominator each one closes a fraction of the remaining
+      # distance to the end of the analysis phase. The bar always advances and
+      # never overshoots.
       step <- 0L
-      total <- max(nrow(spec$loa) * length(spec$group_variables), 1L)
+      note <- function(text) {
+        text <- trimws(sub("^-->\\s*", "", text))
+        if (nzchar(text)) run_log(c(run_log(), text))
+        text
+      }
 
       result <- withCallingHandlers(
         tryCatch(
@@ -479,20 +571,63 @@ server <- function(input, output, session) {
         message = function(m) {
           step <<- step + 1L
           setProgress(
-            min(0.1 + 0.85 * step / total, 0.95),
-            detail = trimws(sub("^-->\\s*", "", conditionMessage(m)))
+            0.03 + 0.72 * (1 - 0.88^step),
+            detail = note(conditionMessage(m))
           )
           invokeRestart("muffleMessage")
+        },
+        warning = function(w) {
+          note(paste0("Warning: ", conditionMessage(w)))
+          invokeRestart("muffleWarning")
         }
       )
 
-      setProgress(1, detail = "done")
-
       if (inherits(result, "run_error")) {
         run_error(result$message)
-      } else {
-        analysis_results(result)
+        return(invisible(NULL))
       }
+
+      # Only now, with a completed run in hand, is anything written to disk.
+      setProgress(0.78, detail = "building the results workbook")
+
+      written <- withCallingHandlers(
+        tryCatch(
+          ak_export_results(
+            results = result,
+            spec = spec,
+            folder = folder,
+            dataset_name = dataset_name,
+            verbose = TRUE
+          ),
+          error = function(error) {
+            structure(list(message = conditionMessage(error)), class = "run_error")
+          }
+        ),
+        message = function(m) {
+          note(conditionMessage(m))
+          invokeRestart("muffleMessage")
+        },
+        warning = function(w) {
+          note(paste0("Warning: ", conditionMessage(w)))
+          invokeRestart("muffleWarning")
+        }
+      )
+
+      if (inherits(written, "run_error")) {
+        # The analysis succeeded; only the saving failed. Keep the results so
+        # the work is not thrown away over a bad folder.
+        analysis_results(result)
+        run_error(paste0(
+          "The analysis finished, but the results could not be saved: ",
+          written$message
+        ))
+        return(invisible(NULL))
+      }
+
+      setProgress(1, detail = basename(written))
+      analysis_results(result)
+      saved_path(written)
+      note(paste0("Saved to ", written))
     })
   })
 
@@ -508,7 +643,9 @@ server <- function(input, output, session) {
     }
     if (is.null(analysis_results())) {
       if (!ak_can_run(step_states())) {
-        return(ak_status("Upload both files and clear any problems, then click Run analyses."))
+        return(ak_status(
+          "Upload both files, clear any problems and choose an output folder, then click Run analyses."
+        ))
       }
       return(ak_status("Ready. Click Run analyses to produce the results."))
     }
@@ -516,8 +653,9 @@ server <- function(input, output, session) {
     results <- analysis_results()
     ak_status(
       sprintf(
-        "Produced %d rows and %d columns.",
-        nrow(results$combined_results), ncol(results$combined_results)
+        "Produced %d rows and %d columns. Saved as %s in %s.",
+        nrow(results$combined_results), ncol(results$combined_results),
+        basename(saved_path()), dirname(saved_path())
       ),
       "success"
     )
@@ -529,10 +667,13 @@ server <- function(input, output, session) {
 
     data.frame(
       Measure = c(
-        "Result rows", "Result columns", "Grouping variables",
-        "Selection counts", "Choice combinations", "Excluded choices"
+        "Saved as", "Folder", "Result rows", "Result columns",
+        "Grouping variables", "Selection counts", "Choice combinations",
+        "Excluded choices"
       ),
       Value = c(
+        if (is.null(saved_path())) "not saved" else basename(saved_path()),
+        if (is.null(saved_path())) "-" else dirname(saved_path()),
         format(nrow(results$combined_results), big.mark = ","),
         format(ncol(results$combined_results), big.mark = ","),
         format(length(unique(stats::na.omit(results$column_map$group_variable)))),
@@ -549,13 +690,35 @@ server <- function(input, output, session) {
     {
       results <- analysis_results()
       req(results)
+      # Previewed the way it was exported, separator rows and all: showing the
+      # raw table here would display spacer and heading markers as rows of NA
+      # that are not in the file the user just received.
+      wide <- ak_prepare_for_export(
+        results$combined_results, ak_export_settings(results, analysis_spec())$layout
+      )
       # A wide table can run to thousands of columns; showing all of them would
       # hang the browser rather than inform anyone.
-      wide <- results$combined_results
       utils::head(wide[, seq_len(min(ncol(wide), 12L)), drop = FALSE], 10L)
     },
     spacing = "xs"
   )
+
+  output$run_log <- renderUI({
+    entries <- run_log()
+    if (length(entries) == 0) {
+      return(ak_status("The pipeline reported nothing."))
+    }
+
+    tags$ul(
+      class = "ak-log",
+      lapply(entries, function(line) {
+        tags$li(
+          class = if (startsWith(line, "Warning:")) "ak-log-warning" else NULL,
+          line
+        )
+      })
+    )
+  })
 }
 
 shinyApp(ui, server)

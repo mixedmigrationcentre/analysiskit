@@ -386,3 +386,88 @@ a:focus {
   overflow-wrap: normal;
   white-space: nowrap;
 }
+
+/* --------------------------------------------------------------------------
+   Destination folder and run log
+   -------------------------------------------------------------------------- */
+.ak-destination {
+  margin-bottom: 16px;
+}
+
+.ak-destination .control-label {
+  display: block;
+  margin-bottom: 6px;
+  font-weight: 700;
+}
+
+.ak-log {
+  max-height: 320px;
+  margin: 0;
+  padding: 12px 12px 12px 28px;
+  overflow-y: auto;
+  font-size: 13px;
+  line-height: 1.55;
+  background-color: var(--mmc-pale-teal);
+  border-left: 4px solid var(--mmc-teal);
+  border-radius: 3px;
+}
+
+.ak-log li {
+  overflow-wrap: anywhere;
+}
+
+.ak-log li + li {
+  margin-top: 4px;
+}
+
+.ak-log-warning {
+  font-weight: 700;
+  color: var(--mmc-plum);
+}
+
+/* Shiny's progress panel. Bootstrap puts a screen-reader-only "2% Complete"
+   span inside the bar; if a stylesheet disturbs .sr-only it becomes a stray
+   number sitting next to the message, so it is pinned out of sight here. */
+/* The width belongs on the panel that positions the notifications, not on each
+   notification: setting it here made the content wider than its container and
+   pushed the message off the right edge of the screen. */
+#shiny-notification-panel {
+  right: 16px;
+  bottom: 16px;
+  width: 360px;
+  max-width: calc(100vw - 32px);
+}
+
+.shiny-notification {
+  /* Shiny ships these translucent (opacity .85), so whatever the panel covers
+     shows through it - table figures behind the bar read as part of the
+     message. Progress needs to be legible more than it needs to be subtle. */
+  width: auto;
+  opacity: 1;
+}
+
+.shiny-notification .progress {
+  /* font-size: 0 rather than a rule aimed at .sr-only: the track carries no
+     text of its own, and Bootstrap's "n% Complete" label was showing through
+     it as a stray number beside the message. */
+  height: 10px;
+  margin-bottom: 10px;
+  font-size: 0;
+  background-color: var(--mmc-pale-teal);
+  border-radius: 5px;
+  box-shadow: none;
+}
+
+.shiny-notification .progress-text {
+  font-size: 13px;
+}
+
+.shiny-notification .progress-message {
+  font-weight: 700;
+}
+
+.shiny-notification .progress-detail {
+  display: block;
+  margin-top: 4px;
+  color: var(--mmc-navy);
+}

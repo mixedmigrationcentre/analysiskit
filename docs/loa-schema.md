@@ -470,20 +470,68 @@ Shiny session.
   is actually available. The observer still refuses the call independently, so the button
   is a convenience rather than the guard.
 
-## 12. Not yet done
+## 12. Output
 
-- No results are written to `outputs/`, and there is no download handler. The Results tab
-  previews the first 12 columns of the wide table only.
+A completed run is written straight to a folder the analyst chooses, as one branded
+`.xlsx` built by `format_my_xlsx_variable_x_group()` — the same kind of file as
+`4Mi_results_QN6.xlsx`.
+
+**The folder is chosen before the run, not after.** `shinyFiles::shinyDirButton()` browses
+the filesystem the app is running on, which is the analyst's own machine (see §11). It is
+its own step in the tracker, and `ak_check_folder()` confirms the folder exists and is
+writable *before* the analysis starts, so a long run is never lost to a read-only
+destination. Nothing is written unless the run completes without error; if the analysis
+succeeds and only the save fails, the results are kept and the interface says the save is
+what went wrong.
+
+Served from a remote host this would browse the *server's* disk, which is almost never
+what anyone wants — a download handler would be the right answer there instead.
+
+**Export settings** (`ak_export_settings()`) are derived from the run rather than
+hard-coded, and reproduce the example output with the default workbook:
+
+| Argument | Value | Where it comes from |
+|---|---|---|
+| `layout` | `blocks` | house style |
+| `value_columns` | `stat` | `settings/value_columns`, minus the count columns |
+| `total_columns` | `n`, `n_total` | the count columns of `settings/value_columns` |
+| `split_by` | `sector` | that column when the table has one, else the first carried metadata column, else `none` |
+
+Splitting one list guarantees `length(c(value_columns, total_columns))` matches the number
+of columns the pipeline wrote per group block; get that wrong and the formatter cuts the
+blocks in the wrong places.
+
+**Filenames** are `analysiskit_<dataset stem>_<YYYYmmdd-HHMMSS>.xlsx`, and an existing file
+is never overwritten — a second run in the same second gets a `_1` suffix. The workbook's
+readme sheet carries the provenance: dataset, List of Analysis, disaggregations and every
+setting that was applied.
+
+**One adaptation is needed before formatting.** `ck_insert_count_separators()` appends a
+`row_type` column at the end of the wide table and inserts spacer and heading rows above
+each derived block. Handed to the formatter unchanged, the trailing `row_type` is read as
+a statistic column and dropped with a warning, and the marker rows — which carry no
+`sector` — are split onto a sheet of their own called "not specified".
+`ak_prepare_for_export()` handles both: in the blocks layout, where every question already
+gets its own titled table, the markers are redundant and are removed; in the matrix layout
+they are kept and `row_type` is moved in among the identifier columns.
+
+## 13. Not yet done
+
+- Nothing is written to `outputs/`, and there is no download handler — the destination is
+  always a folder the user picks. A served deployment would need one.
+- The Results tab previews the first 12 columns of the wide table only.
+- The survey engine (`level` set on an analysis row) needs `srvyr` and
+  `analysistools`, which are not installed by default. The fast engine — every row with an
+  empty `level` — needs neither.
 - The export side (`format_my_xlsx_variable_x_group()`) has its own arguments —
   `layout`, `split_by`, `total_columns`, `hidden_columns` — which this schema does not
   cover. They may deserve an `export` sheet, or may be fixed house style. Decide with
   question 3 below.
-- `functions/` is empty, so the pipeline itself is not in the repository. `app.R` sources
-  whatever is there at startup and reports honestly that it cannot run until the analysis
-  functions are added; two tests skip until then.
+- `app.R` sources everything in `functions/` at startup, so the analysis and export
+  functions can be replaced without touching the app.
 - No `renv`, and no deployment documentation.
 
-## 13. Open questions
+## 14. Open questions
 
 1. Should the app let a user override workbook settings in the UI before running, or is
    the workbook the single source of truth for a run?
