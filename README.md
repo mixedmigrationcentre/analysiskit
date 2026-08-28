@@ -53,11 +53,6 @@ R 4.1 or later. The app installs what it needs from CRAN on first launch:
 Three more are **optional** and are *not* installed for you, because a run only
 reaches them if a workbook asks for them:
 
-| Package | Needed for | Install |
-|---|---|---|
-| `srvyr` | confidence intervals (an analysis row with a `level`) | `install.packages("srvyr")` |
-| `analysistools` | the same | `remotes::install_github("impact-initiatives/analysistools")` |
-| `cleaningtools` | rebuilding select_multiple parent columns | `remotes::install_github("impact-initiatives/cleaningtools")` |
 
 If you never set a `level`, you never need them — the fast tabulation engine
 produces the same point estimates without a survey design.
@@ -248,17 +243,10 @@ a library whose packages have missing dependencies**. Its own message names one
 package at a time; `generate_manifest.R` runs a pre-flight first and reports the
 whole list with the commands that fix it.
 
-The usual cause is the survey chain. The analysis pipeline calls `srvyr::`,
-`analysistools::` and `cleaningtools::` **by name**, so renv records all three —
-and their dependencies — even though a run only reaches them when a workbook asks
-for a confidence level. Deploying pulls them in whether or not you use them.
-
 If you hit `RcppArmadillo [required by survey]`:
 
 ```r
 install.packages(c("RcppArmadillo", "srvyr"))
-remotes::install_github("impact-initiatives/analysistools")
-remotes::install_github("impact-initiatives/cleaningtools")
 ```
 
 then run `source("R/generate_manifest.R")` again.
