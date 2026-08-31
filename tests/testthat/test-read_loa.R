@@ -17,7 +17,7 @@ test_that("an xlsx workbook reads every recognised sheet", {
   expect_setequal(
     names(wb$sheets),
     c("analysis", "group_analysis", "count_selections",
-      "count_combinations", "settings")
+      "count_combinations", "count_exclusive_combinations", "settings")
   )
   expect_equal(nrow(wb$sheets$analysis), 3L)
   expect_equal(wb$unknown_sheets, character(0))
@@ -576,7 +576,8 @@ test_that("the spec carries everything the pipeline needs and nothing else", {
   expect_setequal(
     names(spec),
     c("loa", "group_variables", "rename_map", "count_selections",
-      "count_combinations", "exclude_choices", "settings", "problems", "source")
+      "count_combinations", "count_exclusive_combinations", "exclude_choices",
+      "settings", "problems", "source")
   )
   expect_false(loa_has_errors(spec$problems))
 })

@@ -68,6 +68,32 @@ loa_as_logical <- function(x) {
 }
 
 
+#' Take a Quoted Setting Verbatim
+#'
+#' A spreadsheet will not carry a leading or trailing space: writing ` only` in
+#' a cell and reading it back gives `only`, and the label then renders
+#' "Economiconly". The loss happens in the file format, before this reader sees
+#' the value, so no amount of not-trimming here recovers it.
+#'
+#' So a value wrapped in double quotes is taken exactly as written between them.
+#' `" only"` survives the round trip; `only` behaves as before. This applies to
+#' every text setting, not a special list of them, because any of them could
+#' need an edge space.
+#'
+#' @param value The trimmed cell value.
+#' @return The value, unwrapped when it was quoted.
+#' @keywords internal
+loa_unquote <- function(value) {
+  if (is.na(value) || nchar(value) < 2) {
+    return(value)
+  }
+  if (startsWith(value, "\"") && endsWith(value, "\"")) {
+    return(substr(value, 2L, nchar(value) - 1L))
+  }
+  value
+}
+
+
 #' Coerce a Spreadsheet Cell to a Number
 #' @param x A vector.
 #' @return A numeric vector; unparseable values are `NA`.
@@ -146,7 +172,8 @@ loa_has_errors <- function(problems) {
 loa_known_sheets <- function() {
   c(
     "analysis", "group_analysis", "count_selections",
-    "count_combinations", "exclude_choices", "settings"
+    "count_combinations", "count_exclusive_combinations",
+    "exclude_choices", "settings"
   )
 }
 
@@ -182,7 +209,10 @@ loa_known_analysis_types <- function() {
 #' @return A character vector.
 #' @keywords internal
 loa_derived_analysis_types <- function() {
-  c("count_select_multiple", "combination_select_multiple")
+  c(
+    "count_select_multiple", "combination_select_multiple",
+    "exclusive_combination_select_multiple"
+  )
 }
 
 
@@ -255,7 +285,14 @@ loa_settings_schema <- function() {
     s("count_combinations_spacer", "lgl"),
     s("count_combinations_title_suffix", "chr"),
     s("count_combinations_ignore_case", "lgl"),
-    s("max_combination_choices", "num")
+    s("max_combination_choices", "num"),
+
+    # Exclusive combinations. Everything else about them - ignore_case, joiner,
+    # order, spacer, title_suffix, max_combination_choices - is shared with
+    # count_combinations by design, so only these three are their own.
+    s("count_exclusive_combinations_heading", "chr"),
+    s("count_exclusive_combinations_suffix", "chr"),
+    s("count_exclusive_combinations_none_label", "chr")
   )
 }
 
@@ -459,7 +496,7 @@ loa_parse_settings <- function(sheet) {
 
     converted <- switch(
       type,
-      chr = v,
+      chr = loa_unquote(v),
       `chr[]` = {
         parts <- loa_trim(strsplit(v, ",", fixed = TRUE)[[1]])
         parts[!is.na(parts)]
@@ -868,6 +905,15 @@ loa_variable_coverage <- function(workbook, dataset, sm_separator = NULL) {
     ref(v, "count_combinations", "count_combinations", seq_len(nrow(cc)) + 1L)
   }
 
+  xc <- sheets$count_exclusive_combinations
+  if (!is.null(xc) && nrow(xc) > 0 && "analysis_var" %in% names(xc)) {
+    inc <- if ("include" %in% names(xc)) loa_as_logical(xc$include) else rep(TRUE, nrow(xc))
+    inc[is.na(inc)] <- TRUE
+    v <- loa_trim(xc$analysis_var)
+    v[!inc] <- NA_character_
+    ref(v, "count_exclusive_combinations", "count_exclusive_combinations", seq_len(nrow(xc)) + 1L)
+  }
+
   # --- settings --------------------------------------------------------------
   settings <- loa_parse_settings(sheets$settings)$settings
   for (cc in c("weight_column", "strata_column")) {
@@ -899,7 +945,12 @@ loa_variable_coverage <- function(workbook, dataset, sm_separator = NULL) {
 #' @return `"error"` or `"warning"`, one per element.
 #' @keywords internal
 loa_coverage_severity <- function(role) {
-  ifelse(role %in% c("count_selections", "count_combinations"), "error", "warning")
+  ifelse(
+    role %in% c(
+      "count_selections", "count_combinations", "count_exclusive_combinations"
+    ),
+    "error", "warning"
+  )
 }
 
 
@@ -920,6 +971,8 @@ loa_coverage_problems <- function(coverage) {
     group_var = "this disaggregation will not appear in the output",
     count_selections = "the run will stop when it reaches the selection counts",
     count_combinations = "the run will stop when it reaches the choice combinations",
+    count_exclusive_combinations =
+      "the run will stop when it reaches the exclusive choice combinations",
     weight_column = "the analysis will run unweighted",
     strata_column = "the analysis will run without strata"
   )
@@ -1138,11 +1191,12 @@ validate_loa <- function(workbook, dataset = NULL) {
         problem("analysis", excel_row, "error", paste0(
           "'", a_type[i], "' is produced by the pipeline, not requested here. ",
           "Use the ",
-          if (a_type[i] == "count_select_multiple") {
-            "count_selections"
-          } else {
-            "count_combinations"
-          },
+          switch(
+            a_type[i],
+            count_select_multiple = "count_selections",
+            combination_select_multiple = "count_combinations",
+            exclusive_combination_select_multiple = "count_exclusive_combinations"
+          ),
           " sheet instead."
         ))
         next
@@ -1345,6 +1399,38 @@ validate_loa <- function(workbook, dataset = NULL) {
     }
   }
 
+  # --- 5b. count_exclusive_combinations --------------------------------------
+  # Same shape and same checks as count_combinations. The difference is what the
+  # pipeline does with it, not what a valid sheet looks like.
+  xc <- sheets$count_exclusive_combinations
+  count_exclusive_combinations <- list()
+
+  if (!is.null(xc) && nrow(xc) > 0) {
+    required <- c("analysis_var", "choice_label")
+    absent <- setdiff(required, names(xc))
+
+    if (length(absent) > 0) {
+      problem("count_exclusive_combinations", NA, "error", paste0(
+        "The count_exclusive_combinations sheet is missing required column(s): ",
+        paste(absent, collapse = ", "), "."
+      ))
+    } else {
+      v <- loa_trim(xc$analysis_var)
+      label <- loa_trim(xc$choice_label)
+
+      for (i in seq_len(nrow(xc))) {
+        if (is.na(v[i])) {
+          problem("count_exclusive_combinations", i + 1L, "error", "analysis_var is empty.")
+        }
+        if (is.na(label[i])) {
+          problem("count_exclusive_combinations", i + 1L, "error", "choice_label is empty.")
+        }
+      }
+
+      count_exclusive_combinations <- loa_combination_list(xc)
+    }
+  }
+
   # --- 6. exclude_choices ----------------------------------------------------
   ec <- sheets$exclude_choices
 
@@ -1384,23 +1470,35 @@ validate_loa <- function(workbook, dataset = NULL) {
       ))
     }
 
-    if (length(count_combinations) > 0) {
-      names(count_combinations) <-
-        loa_rename_values(names(count_combinations), rename_map)
+    # Both combination sheets go through the pipeline's own checker. arg_name is
+    # what makes its message name the sheet the user actually wrote in.
+    for (which in c("count_combinations", "count_exclusive_combinations")) {
+      combinations <- if (which == "count_combinations") {
+        count_combinations
+      } else {
+        count_exclusive_combinations
+      }
+      if (length(combinations) == 0) next
 
-      add(loa_delegate_check(
-        "ck_check_choice_combinations",
-        list(
-          combinations = count_combinations,
-          dataset = renamed,
-          loa = renamed_loa,
-          sm_separator = sm_separator,
-          ignore_case = parsed$settings$count_combinations_ignore_case %||% TRUE,
-          exclude_choices = loa_exclude_choices(sheets$exclude_choices),
-          max_choices = parsed$settings$max_combination_choices %||% 6
-        ),
-        "count_combinations"
-      ))
+      names(combinations) <- loa_rename_values(names(combinations), rename_map)
+
+      arguments <- list(
+        combinations = combinations,
+        dataset = renamed,
+        loa = renamed_loa,
+        sm_separator = sm_separator,
+        ignore_case = parsed$settings$count_combinations_ignore_case %||% TRUE,
+        exclude_choices = loa_exclude_choices(sheets$exclude_choices),
+        max_choices = parsed$settings$max_combination_choices %||% 6
+      )
+      # Older builds of the pipeline have no arg_name; passing it there would
+      # be an unused-argument error rather than a validation result.
+      if (exists("ck_check_choice_combinations", mode = "function") &&
+            "arg_name" %in% names(formals(ck_check_choice_combinations))) {
+        arguments$arg_name <- which
+      }
+
+      add(loa_delegate_check("ck_check_choice_combinations", arguments, which))
     }
 
   }
@@ -1543,6 +1641,12 @@ build_analysis_spec <- function(workbook, dataset = NULL) {
     names(combinations) <- loa_rename_values(names(combinations), rename_map)
   }
 
+  exclusive_combinations <- loa_combination_list(sheets$count_exclusive_combinations)
+  if (length(exclusive_combinations) > 0) {
+    names(exclusive_combinations) <-
+      loa_rename_values(names(exclusive_combinations), rename_map)
+  }
+
   count_selections <- character(0)
   cs <- sheets$count_selections
   if (!is.null(cs) && nrow(cs) > 0 && "analysis_var" %in% names(cs)) {
@@ -1560,6 +1664,7 @@ build_analysis_spec <- function(workbook, dataset = NULL) {
     rename_map = rename_map,
     count_selections = count_selections,
     count_combinations = combinations,
+    count_exclusive_combinations = exclusive_combinations,
     exclude_choices = loa_exclude_choices(sheets$exclude_choices),
     settings = parsed$settings,
     problems = problems,
@@ -1579,6 +1684,7 @@ print.analysis_spec <- function(x, ...) {
   cat("  renamed           :", length(x$rename_map), "\n")
   cat("  count_selections  :", length(x$count_selections), "\n")
   cat("  count_combinations:", length(x$count_combinations), "\n")
+  cat("  exclusive combos  :", length(x$count_exclusive_combinations), "\n")
   cat("  exclude_choices   :", length(x$exclude_choices), "\n")
   cat("  settings          :", length(x$settings), "\n")
   cat(
@@ -1617,6 +1723,9 @@ analysis_spec_args <- function(dataset, spec) {
   }
   if (length(spec$count_combinations) > 0) {
     args$count_combinations <- spec$count_combinations
+  }
+  if (length(spec$count_exclusive_combinations) > 0) {
+    args$count_exclusive_combinations <- spec$count_exclusive_combinations
   }
   if (length(spec$exclude_choices) > 0) {
     args$exclude_choices <- spec$exclude_choices

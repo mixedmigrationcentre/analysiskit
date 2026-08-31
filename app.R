@@ -116,6 +116,7 @@ ui <- fluidPage(
           uiOutput("results_status"),
           conditionalPanel(
             condition = "output.resultsReady",
+            uiOutput("exclusive_note"),
             ak_section(
               "Analyses run",
               uiOutput("download_control"),
@@ -749,7 +750,7 @@ server <- function(input, output, session) {
         "Saved as", if (destination_mode$pick_folder) "Folder" else "Location",
         "Result rows", "Result columns",
         "Grouping variables", "Selection counts", "Choice combinations",
-        "Excluded choices"
+        "Exclusive combinations", "Excluded choices"
       ),
       Value = c(
         if (is.null(saved_path())) "not saved" else basename(saved_path()),
@@ -765,6 +766,7 @@ server <- function(input, output, session) {
         format(length(unique(stats::na.omit(results$column_map$group_variable)))),
         format(nrow(results$selection_counts)),
         format(nrow(results$choice_combinations)),
+        format(nrow(results$exclusive_combinations %||% data.frame())),
         format(nrow(results$excluded_choices))
       ),
       check.names = FALSE,
@@ -788,6 +790,16 @@ server <- function(input, output, session) {
     },
     spacing = "xs"
   )
+
+  # Sits above the summary rather than in the run log: these percentages get
+  # published, and the caveat has to be in front of whoever exports the file.
+  output$exclusive_note <- renderUI({
+    results <- analysis_results()
+    if (is.null(results)) {
+      return(tagList())
+    }
+    ak_exclusive_base_panel(results$exclusive_combinations)
+  })
 
   output$run_log <- renderUI({
     entries <- run_log()

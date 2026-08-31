@@ -12,12 +12,17 @@ test_that("every variable the workbook names is reported once per reference", {
     coverage$role[coverage$variable == "Q27"],
     c("analysis_var", "group_var")
   )
-  # Q78 is analysed, counted and combined, so it earns a reference for each.
+  # Q78 is analysed, counted, combined and combined exclusively, so it earns a
+  # reference for each.
   expect_setequal(
     coverage$role[coverage$variable == "Q78"],
-    c("analysis_var", "count_selections", "count_combinations")
+    c(
+      "analysis_var", "count_selections",
+      "count_combinations", "count_exclusive_combinations"
+    )
   )
-  expect_equal(sum(coverage$variable == "Q78"), 4L) # two combination rows
+  # 1 analysis + 1 count + 2 combination rows + 2 exclusive rows.
+  expect_equal(sum(coverage$variable == "Q78"), 6L)
 })
 
 test_that("a select_multiple parent counts as present via its children", {

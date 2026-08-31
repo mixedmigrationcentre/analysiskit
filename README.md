@@ -53,7 +53,6 @@ R 4.1 or later. The app installs what it needs from CRAN on first launch:
 Three more are **optional** and are *not* installed for you, because a run only
 reaches them if a workbook asks for them:
 
-
 If you never set a `level`, you never need them — the fast tabulation engine
 produces the same point estimates without a survey design.
 
@@ -96,7 +95,7 @@ deployed copy.
 in **[docs/loa-schema.md](docs/loa-schema.md)**. What follows is the short
 version.
 
-Up to six sheets. Only `analysis` is required; a missing sheet means "not
+Up to seven sheets. Only `analysis` is required; a missing sheet means "not
 requested" and the pipeline's own default applies.
 
 ### `analysis` — one row per requested analysis
@@ -136,6 +135,19 @@ Gives four mutually exclusive rows — *Economic + Conflict*, *Economic*,
 *Conflict*, *None of these* — that add to 100%. `choice_label` must match the
 export exactly, punctuation and all.
 
+### `count_exclusive_combinations` — the strict version
+
+Same three columns. `count_combinations` asks *"selected Economic, whatever
+else"*; this asks *"selected Economic and nothing else at all"*. Rows read
+*Economic only*, and the catch-all is *Other choices only*. A question can carry
+both blocks.
+
+> **These rows use a smaller denominator than every other table in the output.**
+> Anyone who picked a listed choice together with an unlisted one belongs to no
+> category and leaves the base. The app reports how many that is per question, as
+> a warning on the Results tab — footnote it wherever you publish these
+> percentages.
+
 ### `exclude_choices` — labels that leave the denominator
 
 One `choice_label` per row (`Don't know`, `Refused`). Its own sheet rather than
@@ -148,7 +160,7 @@ merely hidden.
 
 ### `settings` — everything else
 
-Two columns, `setting` and `value`. 39 keys are accepted, covering every
+Two columns, `setting` and `value`. 42 keys are accepted, covering every
 remaining argument of the analysis pipeline. A misspelled key is a *fatal error*,
 not a silent skip — a typo that was ignored would look exactly like a setting
 that had been applied.
@@ -159,6 +171,10 @@ value_columns       stat,n,n_total
 extra_columns       sector
 engine              auto
 ```
+
+Wrap a value in double quotes to keep a leading or trailing space — a
+spreadsheet drops them, so `" only"` and `" + "` need the quotes or the label
+renders `Economiconly`.
 
 Sheets named `readme` or `notes`, or beginning with `_`, are ignored, so the
 workbook can carry its own instructions.
@@ -243,11 +259,10 @@ a library whose packages have missing dependencies**. Its own message names one
 package at a time; `generate_manifest.R` runs a pre-flight first and reports the
 whole list with the commands that fix it.
 
-If you hit `RcppArmadillo [required by survey]`:
-
-```r
-install.packages(c("RcppArmadillo", "srvyr"))
-```
+The usual cause is the survey chain. The analysis pipeline calls `srvyr::`,
+`analysistools::` and `cleaningtools::` **by name**, so renv records all three —
+and their dependencies — even though a run only reaches them when a workbook asks
+for a confidence level. Deploying pulls them in whether or not you use them.
 
 then run `source("R/generate_manifest.R")` again.
 
