@@ -100,11 +100,13 @@ ck_analysis_type_labels <- function() {
   data.frame(
     analysis_type = c(
       "prop_select_one", "prop_select_multiple", "count_select_multiple",
-      "combination_select_multiple", "mean", "median", "ratio"
+      "combination_select_multiple", "exclusive_combination_select_multiple",
+      "mean", "median", "ratio"
     ),
     label_analysis_type = c(
       "Proportion (single choice)", "Proportion (multiple choice)",
       "Number of choices selected", "Combination of choices selected",
+      "Exclusive combination of choices selected",
       "Mean", "Median", "Ratio"
     ),
     stringsAsFactors = FALSE
@@ -651,6 +653,7 @@ ck_resolve_choices <- function(parent,
 #' @param max_choices Refuse more than this many focus choices per question, so
 #'   a long list cannot silently produce hundreds of rows. Default \code{6}
 #'   (64 combinations).
+#' @param arg_name The pipeline argument being checked, used in the error text.
 #'
 #' @return The normalised specification, invisibly: a named list of named
 #'   character vectors, names being the display labels. Errors otherwise.
@@ -661,7 +664,8 @@ ck_check_choice_combinations <- function(combinations,
                                          sm_separator = "/",
                                          ignore_case = TRUE,
                                          exclude_choices = NULL,
-                                         max_choices = 6) {
+                                         max_choices = 6,
+                                         arg_name = "count_combinations") {
   if (length(combinations) == 0) {
     return(invisible(list()))
   }
@@ -672,9 +676,9 @@ ck_check_choice_combinations <- function(combinations,
       any(!nzchar(names(combinations)))) {
     stop(
       paste0(
-        "count_combinations must be a named list - one element per question, ",
+        arg_name, " must be a named list - one element per question, ",
         "named after the select_multiple parent. For example:\n",
-        "  count_combinations = list(\n",
+        "  ", arg_name, " = list(\n",
         "    Q78 = c(\n",
         "      Economic = \"Economic reasons\",\n",
         "      Conflict = \"Armed conflict, generalised violence, and insecurity\"\n",
@@ -783,7 +787,7 @@ ck_check_choice_combinations <- function(combinations,
     if (length(clash) > 0) {
       problems <- c(problems, paste0(
         "'", p, "': ", paste0("\"", clash, "\"", collapse = ", "),
-        " appears in both count_combinations and exclude_choices. ",
+        " appears in both ", arg_name, " and exclude_choices. ",
         "exclude_choices drops every respondent who picked it, so there would ",
         "be nobody left to report the combination for. Remove it from one of them"
       ))
@@ -811,7 +815,7 @@ ck_check_choice_combinations <- function(combinations,
 
   if (length(problems) > 0) {
     stop(
-      paste0("count_combinations is not usable.\n  - ", paste(problems, collapse = "\n  - ")),
+      paste0(arg_name, " is not usable.\n  - ", paste(problems, collapse = "\n  - ")),
       call. = FALSE
     )
   }
@@ -836,6 +840,18 @@ ck_check_choice_combinations <- function(combinations,
 #' Because the result is an ordinary categorical column it then flows through
 #' the normal analysis - overall and across every grouping variable - with no
 #' special casing downstream.
+#'
+#' \strong{Two readings of "combination".} \code{mode = "any"} (the default)
+#' ignores every choice outside the listed ones, so \emph{Economic} means
+#' "selected Economic, did not select Conflict, and whatever else they selected
+#' does not matter". \code{mode = "only"} is strict: \emph{Economic only} means
+#' "selected Economic and nothing else at all". The strict reading is not
+#' exhaustive - a respondent who selected Economic alongside some choice outside
+#' the list belongs to none of the categories - and those respondents are
+#' dropped from the base. \strong{The result is that \code{mode = "only"} reports
+#' on a smaller and differently defined base than every other table in the run},
+#' so the number dropped is returned in the map as \code{n_mixed_dropped} and
+#' should be footnoted wherever these percentages are published.
 #'
 #' \strong{Denominator.} Only respondents who answered the question are counted:
 #' the parent column is non-blank, or at least one child is selected. Anyone who
@@ -862,6 +878,12 @@ ck_check_choice_combinations <- function(combinations,
 #'   choices. Default \code{"None of these"}.
 #' @param joiner Placed between the display labels of a multi-choice
 #'   combination. Default \code{" + "}.
+#' @param mode \code{"any"} (default) ignores the choices outside the listed
+#'   ones. \code{"only"} requires that nothing outside them was selected, and
+#'   drops respondents who mixed a listed choice with an unlisted one.
+#' @param only_suffix Appended to each row label under \code{mode = "only"}, so
+#'   the strict reading is visible in the table itself. Default \code{" only"};
+#'   the \code{none_label} row is left alone.
 #' @param order Row order. \code{"descending"} (default) puts the largest
 #'   combinations first, so the "both" row leads and \code{none_label} closes.
 #'   \code{"ascending"} reverses it.
@@ -870,7 +892,8 @@ ck_check_choice_combinations <- function(combinations,
 #'
 #' @return A list with \code{dataset} (the derived columns added) and \code{map}
 #'   (a dataframe of \code{analysis_var}, \code{combination_column},
-#'   \code{n_choices}, \code{n_combinations} and \code{n_in_base}).
+#'   \code{n_choices}, \code{n_combinations}, \code{n_in_base} and
+#'   \code{n_mixed_dropped}).
 #' @export
 ck_add_choice_combinations <- function(dataset,
                                        combinations,
@@ -880,11 +903,14 @@ ck_add_choice_combinations <- function(dataset,
                                        ignore_case = TRUE,
                                        none_label = "None of these",
                                        joiner = " + ",
+                                       mode = c("any", "only"),
+                                       only_suffix = " only",
                                        order = c("descending", "ascending"),
                                        suffix = "_choice_combination",
                                        verbose = TRUE) {
   sm_child_style <- match.arg(sm_child_style)
   order <- match.arg(order)
+  mode <- match.arg(mode)
 
   empty_map <- data.frame(
     analysis_var = character(0),
@@ -892,6 +918,7 @@ ck_add_choice_combinations <- function(dataset,
     n_choices = integer(0),
     n_combinations = integer(0),
     n_in_base = integer(0),
+    n_mixed_dropped = integer(0),
     stringsAsFactors = FALSE
   )
 
@@ -968,6 +995,27 @@ ck_add_choice_combinations <- function(dataset,
       flags[, j] <- rowSums(m$selected[, hits[[j]], drop = FALSE]) > 0
     }
 
+    # Under the strict reading, a respondent who selected one of the listed
+    # choices alongside a choice outside the list belongs to no category at all,
+    # so they leave the base. Selecting none of the listed choices is still a
+    # category whatever else was picked, which is why only_other is not enough
+    # on its own.
+    n_mixed_dropped <- 0L
+
+    if (mode == "only") {
+      other_cols <- setdiff(m$columns, unique(unlist(hits, use.names = FALSE)))
+
+      other_selected <- if (length(other_cols) > 0) {
+        rowSums(m$selected[, other_cols, drop = FALSE]) > 0
+      } else {
+        rep(FALSE, nrow(dataset))
+      }
+
+      mixed <- (rowSums(flags) > 0) & other_selected
+      n_mixed_dropped <- sum(in_base & mixed)
+      in_base <- in_base & !mixed
+    }
+
     # Every subset of the k focus choices, largest first, then in the order the
     # choices were given. combn() is lexicographic, so this is deterministic.
     sets <- unlist(
@@ -981,7 +1029,11 @@ ck_add_choice_combinations <- function(dataset,
     set_labels <- vapply(
       sets,
       function(idx) {
-        if (length(idx) == 0) none_label else paste(display[idx], collapse = joiner)
+        if (length(idx) == 0) {
+          return(none_label)
+        }
+        label <- paste(display[idx], collapse = joiner)
+        if (mode == "only") paste0(label, only_suffix) else label
       },
       character(1)
     )
@@ -1018,11 +1070,13 @@ ck_add_choice_combinations <- function(dataset,
       n_choices = k,
       n_combinations = length(sets),
       n_in_base = sum(in_base),
+      n_mixed_dropped = n_mixed_dropped,
       stringsAsFactors = FALSE
     )
 
     ck_note(
-      "'", p, "': ", k, " choice(s) -> ", length(sets), " combination(s) over ",
+      "'", p, "': ", k, " choice(s) -> ", length(sets),
+      if (mode == "only") " exclusive combination(s) over " else " combination(s) over ",
       sum(in_base), " respondent(s) who answered",
       if (n_excluded_out > 0) {
         paste0(" (", n_excluded_out, " dropped by exclude_choices)")
@@ -1031,6 +1085,17 @@ ck_add_choice_combinations <- function(dataset,
       },
       verbose = verbose
     )
+
+    if (n_mixed_dropped > 0) {
+      ck_note(
+        "'", p, "': ", n_mixed_dropped, " respondent(s) (",
+        format(round(100 * n_mixed_dropped / (n_mixed_dropped + sum(in_base)), 1), nsmall = 1),
+        "% of those who answered) selected a listed choice together with an ",
+        "unlisted one and are outside this base. Footnote this - it is not the ",
+        "denominator used by the other tables",
+        verbose = verbose
+      )
+    }
   }
 
   list(
@@ -1042,36 +1107,45 @@ ck_add_choice_combinations <- function(dataset,
 
 #' Combine the Derived-Column Maps into One
 #'
-#' The selection counts and the choice combinations are both derived categorical
-#' columns that ride through the LOA as plain proportions and are renamed
-#' afterwards. Everything downstream - the LOA append, the rename, the block
-#' positioning, the separator rows - works off this single table so neither
-#' feature needs its own branch.
+#' The selection counts, the choice combinations and the exclusive choice
+#' combinations are all derived categorical columns that ride through the LOA as
+#' plain proportions and are renamed afterwards. Everything downstream - the LOA
+#' append, the rename, the block positioning, the separator rows - works off
+#' this single table so no feature needs its own branch.
 #'
 #' @param count_map The \code{map} from \code{\link{ck_add_selection_counts}}.
 #' @param combination_map The \code{map} from
-#'   \code{\link{ck_add_choice_combinations}}.
+#'   \code{\link{ck_add_choice_combinations}} run with \code{mode = "any"}.
+#' @param exclusive_map The \code{map} from
+#'   \code{\link{ck_add_choice_combinations}} run with \code{mode = "only"}.
 #'
 #' @return A dataframe of \code{analysis_var}, \code{derived_column} and
 #'   \code{analysis_type}.
 #' @keywords internal
-ck_derived_map <- function(count_map = NULL, combination_map = NULL) {
+ck_derived_map <- function(count_map = NULL,
+                           combination_map = NULL,
+                           exclusive_map = NULL) {
+  spec <- list(
+    list(map = count_map, column = "count_column", type = "count_select_multiple"),
+    list(
+      map = combination_map, column = "combination_column",
+      type = "combination_select_multiple"
+    ),
+    list(
+      map = exclusive_map, column = "combination_column",
+      type = "exclusive_combination_select_multiple"
+    )
+  )
+
   parts <- list()
 
-  if (!is.null(count_map) && nrow(count_map) > 0) {
-    parts[[length(parts) + 1]] <- data.frame(
-      analysis_var = count_map$analysis_var,
-      derived_column = count_map$count_column,
-      analysis_type = "count_select_multiple",
-      stringsAsFactors = FALSE
-    )
-  }
+  for (sp in spec) {
+    if (is.null(sp$map) || nrow(sp$map) == 0) next
 
-  if (!is.null(combination_map) && nrow(combination_map) > 0) {
     parts[[length(parts) + 1]] <- data.frame(
-      analysis_var = combination_map$analysis_var,
-      derived_column = combination_map$combination_column,
-      analysis_type = "combination_select_multiple",
+      analysis_var = sp$map$analysis_var,
+      derived_column = sp$map[[sp$column]],
+      analysis_type = sp$type,
       stringsAsFactors = FALSE
     )
   }
@@ -2579,7 +2653,8 @@ ck_order_count_blocks <- function(wide_table,
                                   count_map,
                                   derived_types = c(
                                     "count_select_multiple",
-                                    "combination_select_multiple"
+                                    "combination_select_multiple",
+                                    "exclusive_combination_select_multiple"
                                   )) {
   if (is.null(count_map) || nrow(count_map) == 0) return(wide_table)
   if (!all(c("analysis_type", "analysis_var") %in% names(wide_table))) {
@@ -2639,7 +2714,8 @@ ck_insert_count_separators <- function(wide_table,
                                        spacer = TRUE,
                                        derived_types = c(
                                          "count_select_multiple",
-                                         "combination_select_multiple"
+                                         "combination_select_multiple",
+                                         "exclusive_combination_select_multiple"
                                        )) {
   if (is.null(count_map) || nrow(count_map) == 0) return(wide_table)
   if (!"analysis_type" %in% names(wide_table)) return(wide_table)
@@ -2850,6 +2926,41 @@ ck_design_columns <- function(dataset,
 #'   Default \code{TRUE}.
 #' @param count_combinations_title_suffix Optionally appended to the question
 #'   label on combination rows. Default \code{""}.
+#' @param count_exclusive_combinations Optional named list, same shape as
+#'   \code{count_combinations}, asking the \emph{strict} version of the same
+#'   question: \emph{Economic only} means "selected Economic and nothing else at
+#'   all", not "selected Economic, whatever else". For the same two choices that
+#'   is \emph{Economic + Conflict only}, \emph{Economic only}, \emph{Conflict
+#'   only}, \emph{None of these}. Reported with
+#'   \code{analysis_type = "exclusive_combination_select_multiple"}, so a
+#'   question can carry both this block and the \code{count_combinations} one.
+#'
+#'   \strong{These rows sit on a different base.} A respondent who selected
+#'   Economic alongside a choice outside the list belongs to none of the four
+#'   categories and is dropped, so the denominator here is smaller than on every
+#'   other table in the workbook. The number dropped per question is returned in
+#'   \code{exclusive_combinations$n_mixed_dropped} - footnote it wherever these
+#'   percentages are published. The settings shared with
+#'   \code{count_combinations} (\code{_ignore_case}, \code{_none_label},
+#'   \code{_joiner}, \code{_order}, \code{_spacer}, \code{_title_suffix}) apply
+#'   to both blocks.
+#' @param count_exclusive_combinations_heading Heading row above each exclusive
+#'   combination block. \code{""} inserts none.
+#' @param count_exclusive_combinations_none_label Row label for respondents who
+#'   selected none of the listed choices in the \emph{exclusive} block. Kept
+#'   separate from \code{count_combinations_none_label} so the two blocks do not
+#'   both show a row called "None of these", which would be easy to confuse when
+#'   they sit under the same question. Default \code{"Other choices only"} -
+#'   accurate, because a respondent in this row selected nothing from the list,
+#'   so everything they did select is outside it.
+#'
+#'   Note the two rows hold the \emph{same people}: not selecting a listed
+#'   choice means never being dropped as a mixed response. Their \code{n} will
+#'   match across the two blocks while their percentages differ, because the
+#'   exclusive block divides by a smaller base. That is expected, not an error.
+#' @param count_exclusive_combinations_suffix Appended to each row label of the
+#'   exclusive block, so the strict reading is visible in the table itself.
+#'   Default \code{" only"}; the \code{none_label} row is left alone.
 #' @param max_combination_choices Refuse more than this many choices per
 #'   question, so a long list cannot silently produce hundreds of rows. Default
 #'   \code{6}.
@@ -2896,7 +3007,8 @@ ck_design_columns <- function(dataset,
 #' @return A list with \code{combined_results} (the wide table),
 #'   \code{results_long}, \code{column_map}, \code{label_lookup},
 #'   \code{loa_used}, \code{excluded_choices}, \code{dropped_groups},
-#'   \code{selection_counts} and \code{choice_combinations}.
+#'   \code{selection_counts}, \code{choice_combinations} and
+#'   \code{exclusive_combinations}.
 #' @export
 #' @importFrom dplyr all_of bind_rows distinct left_join relocate
 #' @importFrom tidyr pivot_wider
@@ -2931,6 +3043,10 @@ run_group_analysis_pipeline <- function(dataset,
                                         count_combinations_heading = "Choice combination",
                                         count_combinations_spacer = TRUE,
                                         count_combinations_title_suffix = "",
+                                        count_exclusive_combinations = NULL,
+                                        count_exclusive_combinations_heading = "Exclusive choice combination",
+                                        count_exclusive_combinations_suffix = " only",
+                                        count_exclusive_combinations_none_label = "Other choices only",
                                         max_combination_choices = 6,
                                         fallback_level = 0.95,
                                         engine = c("auto", "fast", "survey"),
@@ -3006,7 +3122,19 @@ run_group_analysis_pipeline <- function(dataset,
     sm_separator = sm_separator,
     ignore_case = count_combinations_ignore_case,
     exclude_choices = exclude_choices,
-    max_choices = max_combination_choices
+    max_choices = max_combination_choices,
+    arg_name = "count_combinations"
+  )
+
+  count_exclusive_combinations <- ck_check_choice_combinations(
+    combinations = count_exclusive_combinations,
+    dataset = dataset,
+    loa = loa,
+    sm_separator = sm_separator,
+    ignore_case = count_combinations_ignore_case,
+    exclude_choices = exclude_choices,
+    max_choices = max_combination_choices,
+    arg_name = "count_exclusive_combinations"
   )
 
   if (any(duplicated(group_variables))) {
@@ -3094,9 +3222,29 @@ run_group_analysis_pipeline <- function(dataset,
   )
   dataset <- combos$dataset
 
-  # Both features are derived categorical columns, so everything below works off
-  # one table rather than branching per feature.
-  derived <- ck_derived_map(counts$map, combos$map)
+  # The strict reading of the same question: a listed choice mixed with an
+  # unlisted one belongs to no category, so those respondents leave the base and
+  # this block reports on a smaller denominator than anything else in the run.
+  exclusive <- ck_add_choice_combinations(
+    dataset = dataset,
+    combinations = count_exclusive_combinations,
+    sm_separator = sm_separator,
+    sm_child_style = sm_child_style,
+    exclude_choices = exclude_choices,
+    ignore_case = count_combinations_ignore_case,
+    none_label = count_exclusive_combinations_none_label,
+    joiner = count_combinations_joiner,
+    mode = "only",
+    only_suffix = count_exclusive_combinations_suffix,
+    order = count_combinations_order,
+    suffix = "_exclusive_combination",
+    verbose = verbose
+  )
+  dataset <- exclusive$dataset
+
+  # All three features are derived categorical columns, so everything below
+  # works off one table rather than branching per feature.
+  derived <- ck_derived_map(counts$map, combos$map, exclusive$map)
 
   if (isTRUE(prepare_sm)) {
     dataset <- ck_sm_children_to_binary(
@@ -3397,7 +3545,8 @@ run_group_analysis_pipeline <- function(dataset,
   if (nrow(derived) > 0 && "analysis_type" %in% names(wide)) {
     title_suffix <- c(
       count_select_multiple = count_selections_title_suffix,
-      combination_select_multiple = count_combinations_title_suffix
+      combination_select_multiple = count_combinations_title_suffix,
+      exclusive_combination_select_multiple = count_combinations_title_suffix
     )
 
     for (tp in names(title_suffix)) {
@@ -3451,11 +3600,13 @@ run_group_analysis_pipeline <- function(dataset,
       count_map = derived,
       heading = c(
         count_select_multiple = count_selections_heading,
-        combination_select_multiple = count_combinations_heading
+        combination_select_multiple = count_combinations_heading,
+        exclusive_combination_select_multiple = count_exclusive_combinations_heading
       ),
       spacer = c(
         count_select_multiple = count_selections_spacer,
-        combination_select_multiple = count_combinations_spacer
+        combination_select_multiple = count_combinations_spacer,
+        exclusive_combination_select_multiple = count_combinations_spacer
       )
     )
   }
@@ -3471,6 +3622,7 @@ run_group_analysis_pipeline <- function(dataset,
     excluded_choices = exclusion$excluded,
     dropped_groups = small$dropped,
     selection_counts = counts$map,
-    choice_combinations = combos$map
+    choice_combinations = combos$map,
+    exclusive_combinations = exclusive$map
   )
 }

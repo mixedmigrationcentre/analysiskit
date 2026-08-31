@@ -303,6 +303,84 @@ ak_status <- function(text, type = "neutral") {
 }
 
 
+#' The Exclusive-Combination Base, Spelled Out
+#'
+#' `count_exclusive_combinations` rows sit on a smaller denominator than every
+#' other table in the output: a respondent who selected a listed choice
+#' *together with* an unlisted one belongs to none of the categories and leaves
+#' the base. That is the intended meaning of "only", but it is invisible in the
+#' finished workbook - the percentages simply look like every other percentage.
+#'
+#' So the number is reported per question, as a share of everyone who answered,
+#' in the place someone sees before they export the file.
+#'
+#' @param exclusive_map The `exclusive_combinations` element of a pipeline
+#'   result: `analysis_var`, `n_in_base` and `n_mixed_dropped`.
+#' @return A character vector of sentences, or `character(0)` when no
+#'   respondent was dropped.
+#' @export
+ak_exclusive_base_note <- function(exclusive_map) {
+  if (is.null(exclusive_map) || nrow(exclusive_map) == 0) {
+    return(character(0))
+  }
+  if (!all(c("analysis_var", "n_mixed_dropped") %in% names(exclusive_map))) {
+    return(character(0))
+  }
+
+  dropped <- as.numeric(exclusive_map$n_mixed_dropped)
+  dropped[is.na(dropped)] <- 0
+  in_base <- if ("n_in_base" %in% names(exclusive_map)) {
+    as.numeric(exclusive_map$n_in_base)
+  } else {
+    rep(NA_real_, nrow(exclusive_map))
+  }
+
+  keep <- dropped > 0
+  if (!any(keep)) {
+    return(character(0))
+  }
+
+  answered <- dropped + in_base
+  share <- ifelse(is.finite(answered) & answered > 0, 100 * dropped / answered, NA_real_)
+
+  paste0(
+    exclusive_map$analysis_var[keep], ": ",
+    format(dropped[keep], big.mark = ",", trim = TRUE),
+    " respondent(s)",
+    ifelse(
+      is.na(share[keep]),
+      "",
+      paste0(" (", format(round(share[keep], 1), nsmall = 1, trim = TRUE), "% of those who answered)")
+    ),
+    " selected one of these choices together with an unlisted one, and are outside this base."
+  )
+}
+
+
+#' Render the Exclusive-Combination Caveat
+#' @param exclusive_map The `exclusive_combinations` element of a result.
+#' @return A Shiny tag; empty when nothing was dropped.
+#' @export
+ak_exclusive_base_panel <- function(exclusive_map) {
+  notes <- ak_exclusive_base_note(exclusive_map)
+  if (length(notes) == 0) {
+    return(shiny::tagList())
+  }
+
+  shiny::tags$div(
+    class = "status-message status-warning",
+    shiny::tags$strong(
+      "These rows use a smaller denominator than the rest of the workbook."
+    ),
+    shiny::tags$ul(
+      class = "ak-caveat",
+      lapply(notes, shiny::tags$li)
+    ),
+    "Footnote this wherever the exclusive percentages are published."
+  )
+}
+
+
 #' Render a Section With a Heading
 #' @param title Section heading.
 #' @param ... Section contents.

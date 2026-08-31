@@ -18,12 +18,15 @@ pipeline_formals <- function() {
     "count_combinations_none_label", "count_combinations_joiner",
     "count_combinations_order", "count_combinations_heading",
     "count_combinations_spacer", "count_combinations_title_suffix",
-    "max_combination_choices", "fallback_level", "engine", "min_group_n",
-    "slim_design", "keep_missing_groups", "sm_separator", "prepare_sm",
-    "sm_child_style", "blank_to_na", "label_choices",
-    "add_analysis_type_label", "analysis_type_labels", "recreate_sm_parents",
-    "drop_empty_prop_rows", "summary_value_label", "missing_group_label",
-    "use_group_prefix", "lonely_psu", "verbose"
+    "count_exclusive_combinations", "count_exclusive_combinations_heading",
+    "count_exclusive_combinations_suffix",
+    "count_exclusive_combinations_none_label", "max_combination_choices",
+    "fallback_level", "engine", "min_group_n", "slim_design",
+    "keep_missing_groups", "sm_separator", "prepare_sm", "sm_child_style",
+    "blank_to_na", "label_choices", "add_analysis_type_label",
+    "analysis_type_labels", "recreate_sm_parents", "drop_empty_prop_rows",
+    "summary_value_label", "missing_group_label", "use_group_prefix",
+    "lonely_psu", "verbose"
   )
 }
 
@@ -103,12 +106,13 @@ test_that("a fully populated workbook binds to the pipeline's real signature", {
 })
 
 test_that("the settings allow-list covers the pipeline's signature exactly", {
-  # 46 formals: 6 come from sheets, 3 are deliberately not settable, and the
+  # 50 formals: 7 come from sheets, 3 are deliberately not settable, and the
   # rest are the settings sheet. A pipeline argument in none of those three
   # groups is one the workbook silently cannot reach.
   from_sheets <- c(
     "dataset", "loa", "group_variables",
-    "count_selections", "count_combinations", "exclude_choices"
+    "count_selections", "count_combinations", "count_exclusive_combinations",
+    "exclude_choices"
   )
   not_settable <- c("label_row", "analysis_type_labels", "verbose")
 

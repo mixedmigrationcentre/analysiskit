@@ -11,7 +11,7 @@ files: the dataset and the LoA.
 
 ## 1. Overview
 
-The LoA is an `.xlsx` workbook of up to six sheets. Only `analysis` is required.
+The LoA is an `.xlsx` workbook of up to seven sheets. Only `analysis` is required.
 
 | Sheet | Required | Drives |
 |---|---|---|
@@ -19,6 +19,7 @@ The LoA is an `.xlsx` workbook of up to six sheets. Only `analysis` is required.
 | `group_analysis` | no | `group_variables`, plus a variable-renaming map |
 | `count_selections` | no | `count_selections` |
 | `count_combinations` | no | `count_combinations` |
+| `count_exclusive_combinations` | no | `count_exclusive_combinations` |
 | `exclude_choices` | no | `exclude_choices` |
 | `settings` | no | the remaining scalar arguments |
 
@@ -207,6 +208,57 @@ hard parts: a choice label that matches no child column (with a "did you mean" s
 more than `max_combination_choices` choices for one question, two choices sharing a display
 name, a choice that also appears in `exclude_choices`, and a question that is not a
 select_multiple. The reader adds only: blank `analysis_var` or `choice_label` is fatal.
+
+---
+
+## 5b. Sheet `count_exclusive_combinations`
+
+The same shape as `count_combinations` — `analysis_var`, `choice_label`,
+`display_name`, optional `include` — asking the **strict** version of the same
+question.
+
+| | `count_combinations` | `count_exclusive_combinations` |
+|---|---|---|
+| *Economic* means | selected Economic, whatever else | selected Economic **and nothing else at all** |
+| Row labels | `Economic` | `Economic only` |
+| "no listed choice" row | `None of these` | `Other choices only` |
+| `analysis_type` | `combination_select_multiple` | `exclusive_combination_select_multiple` |
+
+A question can carry **both** blocks; fill in both sheets to get both.
+
+### ⚠ These rows sit on a smaller denominator than everything else
+
+A respondent who selected a listed choice *together with* an unlisted one
+belongs to none of the categories and leaves the base entirely. That is what
+"only" means, and it is invisible in the finished workbook — the percentages
+look like every other percentage.
+
+The pipeline counts them per question in
+`exclusive_combinations$n_mixed_dropped`, and the app reports it as a warning on
+the Results tab:
+
+> Q78: 312 respondent(s) (18.4% of those who answered) selected one of these
+> choices together with an unlisted one, and are outside this base.
+
+**Footnote it wherever these percentages are published.** Two tables in the same
+workbook, both labelled as percentages of respondents, will not share a
+denominator.
+
+### Settings
+
+Only three are its own. Everything else — `_ignore_case`, `_joiner`, `_order`,
+`_spacer`, `_title_suffix` and `max_combination_choices` — is shared with
+`count_combinations` by design, so the two blocks stay consistent.
+
+| setting | default |
+|---|---|
+| `count_exclusive_combinations_heading` | `Exclusive choice combination` |
+| `count_exclusive_combinations_suffix` | `" only"` |
+| `count_exclusive_combinations_none_label` | `Other choices only` |
+
+**Validation** is delegated to `ck_check_choice_combinations()`, the same
+checker, called with `arg_name = "count_exclusive_combinations"` so its messages
+name the sheet you actually wrote in.
 
 ---
 

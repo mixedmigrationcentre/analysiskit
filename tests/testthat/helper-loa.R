@@ -62,6 +62,15 @@ fixture_sheets <- function(...) {
       display_name = c("Economic", "Conflict"),
       stringsAsFactors = FALSE
     ),
+    count_exclusive_combinations = data.frame(
+      analysis_var = c("Q78", "Q78"),
+      choice_label = c(
+        "Economic reasons",
+        "Armed conflict, generalised violence, and insecurity"
+      ),
+      display_name = c("Economic", "Conflict"),
+      stringsAsFactors = FALSE
+    ),
     settings = data.frame(
       setting = c("sm_separator", "value_columns", "extra_columns"),
       value = c("/", "stat,n,n_total", "sector"),
