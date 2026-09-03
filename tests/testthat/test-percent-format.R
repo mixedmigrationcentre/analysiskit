@@ -51,6 +51,32 @@ write_fixture_workbook <- function(..., layout = "blocks") {
 }
 
 
+# The formatter's own header warns that two files once defined
+# format_my_xlsx_variable_x_group(), and that source() order alone decided
+# which survived. Nothing errors when that happens - the workbook still builds,
+# just with the older definition, where percent_digits does not exist and the
+# formatting silently reverts. So the invariant is worth pinning directly.
+test_that("exactly one file in functions/ defines the formatter", {
+  files <- list.files("../../functions", pattern = "[.]R$", full.names = TRUE)
+  skip_if(length(files) == 0, "functions/ is not reachable from here")
+
+  defines <- vapply(files, function(f) {
+    any(grepl(
+      "^\\s*format_my_xlsx_variable_x_group\\s*<-\\s*function",
+      readLines(f, warn = FALSE)
+    ))
+  }, logical(1))
+
+  expect_equal(sum(defines), 1L, info = paste(basename(files[defines]), collapse = ", "))
+})
+
+
+test_that("the loaded formatter is the build that carries percent_digits", {
+  expect_true(exists("ck_formatter_build", mode = "function"))
+  expect_match(ck_formatter_build(), "percent_digits")
+})
+
+
 test_that("ck_percent_format builds the Excel format for a digit count", {
   expect_equal(ck_percent_format(0), "0%")
   expect_equal(ck_percent_format(1), "0.0%")

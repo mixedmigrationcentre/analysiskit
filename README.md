@@ -231,6 +231,7 @@ One MMC-branded `.xlsx`, styled by `format_my_xlsx_variable_x_group()`:
 
 - one small table per question, percentages on the left, matching counts on the
   right
+- disaggregation groups ordered by sample size, largest first
 - one sheet per `sector`
 - a `readme` sheet recording the dataset, the List of Analysis, the
   disaggregations and every setting that was applied
@@ -340,7 +341,9 @@ R/
   ui_components.R         the rules behind the interface, as pure functions
   export_results.R        filenames, export settings, writing the workbook
   generate_manifest.R     deployment tooling (not bundled with the app)
-functions/                the analysis pipeline and the MMC formatter
+functions/
+  ck_analysis_ona_*.R     the analysis pipeline
+  format_my_xlsx_*_ordered_n.R   the MMC export formatter
 www/                      stylesheet and logo
 docs/
   loa-schema.md           the full workbook specification
@@ -354,6 +357,18 @@ reactives; it holds no analysis and no validation.
 
 The analysis and export functions are sourced from `functions/` at startup, so
 they can be replaced without touching the app.
+
+**One caution about replacing the formatter.** Every `.R` file in `functions/`
+is sourced, so two files defining `format_my_xlsx_variable_x_group()` do not
+error — `source()` order silently decides which one survives, and the older
+definition can win. The workbook still builds, just without the newer
+arguments. When you drop in a new build, retire the old file rather than
+leaving it beside the new one. A test enforces this, and every run prints the
+build that is actually loaded as the first line of the formatter's log:
+
+```
+format_my_xlsx_variable_x_group [simplified build: n-ordering, empty-group drop, NaN blanking, percent_digits]
+```
 
 ---
 

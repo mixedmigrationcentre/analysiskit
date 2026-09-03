@@ -39,6 +39,20 @@
 # 1. Palette
 # -----------------------------------------------------------------------------
 
+#' Which Build of the Formatter Is Loaded
+#'
+#' Two files in this project define `format_my_xlsx_variable_x_group()`, so
+#' `source()` order decides which definition survives - silently, and with no
+#' error, because the signatures overlap. This is printed on every run so the
+#' answer is never in doubt.
+#'
+#' @return A one-line build description.
+#' @export
+ck_formatter_build <- function() {
+  "simplified build: n-ordering, empty-group drop, NaN blanking, percent_digits"
+}
+
+
 #' MMC Brand Colour Palette
 #'
 #' @return A named character vector of hex colours.
@@ -403,14 +417,14 @@ ck_body_style <- function(
 
 #' The Excel Number Format for a Percentage
 #'
-#' Percentages are stored as proportions and displayed by Excel's number
+#' Percentages are stored as proportions and displayed through Excel's number
 #' format, so the cell keeps its full precision while the sheet shows a rounded
-#' figure. That matters: a column of displayed whole numbers still sums and
-#' averages correctly, which it would not if the stored values had been
-#' truncated on the way in.
+#' figure. That distinction matters: a column of displayed whole numbers still
+#' sums and averages correctly, which it would not if the stored values had
+#' been truncated on the way in.
 #'
-#' Built as a string rather than using openxlsx's built-in `"PERCENTAGE"` id,
-#' which is fixed at two decimals.
+#' Built as a format string rather than using openxlsx's built-in
+#' `"PERCENTAGE"` id, which is fixed at two decimals.
 #'
 #' @param digits Number of decimal places, 0 or more.
 #' @return An Excel number format string, e.g. `"0%"` or `"0.0%"`.
@@ -598,8 +612,39 @@ ck_safe_sheet_name <- function(x, taken = character(0)) {
 #' @param blocks The statistic blocks.
 #' @param block_group Grouping variable of each block.
 #' @param overall_idx Index of the Overall block(s).
+#' @param n_index Number of identifier columns before the statistics.
 #' @param split_by `"none"`, `"group_variable"` and/or column names.
 #' @param repeat_overall Logical. Repeat the Overall block on every sheet.
+#' @param order_groups_by_n Logical, default `TRUE`. Order the group columns
+#'   within each grouping variable by sample size, largest first, instead of the
+#'   alphabetical order they come out of the pipeline in - so
+#'   `Female (n=740), Male (n=1152)` is written `Male (n=1152), Female (n=740)`,
+#'   and `No, Refused, Yes` becomes `Yes, No, Refused`. Only blocks belonging to
+#'   the same grouping variable move, so the merged variable band above them
+#'   still spans a contiguous stretch and `Overall` stays put. Needs a count
+#'   column: pass `total_columns` (e.g. `c("n", "n_total")`) or there is nothing
+#'   to sort by and the order is left alone. `FALSE` restores the alphabetical
+#'   order.
+#'
+#'   This sets the sheet-wide order, from each group's sample size across the
+#'   whole table. In `layout = "blocks"` it is then refined per question unless
+#'   `order_groups_per_question` is turned off.
+#' @param order_groups_per_question Logical, default `TRUE`, `layout = "blocks"`
+#'   only. Give every question its own group order, largest first by that
+#'   question's own denominator, rather than having them all follow the
+#'   sheet-wide order. Questions with different coverage then show their groups
+#'   in different orders, which is the point.
+#'
+#'   The permutation stays inside each grouping variable's run, so the merged
+#'   variable band above the columns, the alternating block shading and the
+#'   column widths are all unaffected - only which block sits in which column
+#'   changes, and every header carries its own name and `(n=)`.
+#'
+#'   The cost: reading straight down a column no longer follows one group. The
+#'   third column may be `Male` on one question and `Female` on the next. Set
+#'   this to `FALSE` if you need the columns to line up down the sheet;
+#'   `layout = "matrix"` always does, since there every question is a row under
+#'   one shared header.
 #' @param drop_empty_groups Logical, default `TRUE`. Leave out any group whose
 #'   sample size is zero on that sheet, in both the percentage panel and the
 #'   count panel. A grouping variable's levels are fixed across the whole table,
@@ -620,6 +665,7 @@ ck_build_sheet_plan <- function(
   blocks,
   block_group,
   overall_idx,
+  n_index,
   split_by,
   repeat_overall,
   table_sheet_name,
@@ -649,7 +695,7 @@ ck_build_sheet_plan <- function(
     analysis_var_value = "option",
     label_analysis_var = "question_label"
   )
-  index_names <- names(dat)[seq_len(blocks[[1]]$cols[1] - 1)]
+  index_names <- names(dat)[seq_len(n_index)]
 
   row_cols <- character(0)
   for (cc in row_cols_raw) {
@@ -779,6 +825,122 @@ ck_build_sheet_plan <- function(
 }
 
 
+#' Find the Denominator Column to Read Sample Sizes From
+#'
+#' The denominator can reach the formatter through either argument: as
+#' `total_columns = c("n", "n_total")`, or folded into
+#' `value_columns = c("stat", "n", "n_total")` with `total_columns` left `NULL`.
+#' The block splitter cannot tell the two apart - it only counts columns - so
+#' anything that reads sample sizes must not depend on which was used. It looks
+#' at `total_columns` first, then at the base names the blocks actually hold.
+#'
+#' @param blocks The statistic blocks.
+#' @param total_columns The `total_columns` argument, possibly `NULL`.
+#' @return A base name, or `NULL` when the blocks carry no count column at all.
+#' @keywords internal
+ck_denominator_base <- function(blocks, total_columns = NULL) {
+  if (length(total_columns) > 0) {
+    return(
+      if ("n_total" %in% total_columns) {
+        "n_total"
+      } else {
+        total_columns[length(total_columns)]
+      }
+    )
+  }
+
+  present <- unique(unlist(
+    lapply(blocks, function(b) b$base_names),
+    use.names = FALSE
+  ))
+
+  for (candidate in c("n_total", "n")) {
+    if (candidate %in% present) {
+      return(candidate)
+    }
+  }
+
+  NULL
+}
+
+
+#' Sample Size of Each Group Block
+#'
+#' The number of respondents behind a block is the largest denominator recorded
+#' for it across the rows considered - the same rule the block headers and the
+#' readme composition table use, so the three always agree.
+#'
+#' @param dat The table.
+#' @param blocks The statistic blocks.
+#' @param sample_base Base name of the denominator column (e.g. `"n_total"`), or
+#'   `NULL` when the table carries no count column.
+#' @param rows Optional row indices to restrict to. Defaults to the whole table.
+#' @return A numeric vector, one element per block, `NA` where no finite
+#'   denominator was recorded.
+#' @keywords internal
+ck_block_sample_sizes <- function(dat, blocks, sample_base, rows = NULL) {
+  if (is.null(sample_base) || length(blocks) == 0) {
+    return(rep(NA_real_, length(blocks)))
+  }
+  if (is.null(rows)) {
+    rows <- seq_len(nrow(dat))
+  }
+
+  vapply(
+    blocks,
+    function(b) {
+      k <- which(b$base_names == sample_base)
+      if (length(k) == 0) {
+        return(NA_real_)
+      }
+
+      v <- suppressWarnings(as.numeric(dat[[b$cols[k[1]]]][rows]))
+      v <- v[is.finite(v)]
+
+      if (length(v) == 0) NA_real_ else max(v)
+    },
+    numeric(1)
+  )
+}
+
+
+#' Order Group Blocks by Sample Size Within Each Grouping Variable
+#'
+#' Group values come out of the pipeline alphabetically, which puts `Female`
+#' before `Male` and `No, Refused, Yes` in that order regardless of how many
+#' respondents are behind each. Sorting them largest first puts the substantial
+#' columns where they will be read.
+#'
+#' Only blocks *within* the same grouping variable move, so the merged variable
+#' band above them still spans a contiguous stretch and `Overall` - a run of one
+#' - stays where it is. The order is decided once for the whole workbook from
+#' each block's overall sample size, not per question: the block layout writes
+#' one header per question, and re-sorting each of them independently would
+#' leave the columns unaligned down the sheet.
+#'
+#' @param blocks The statistic blocks.
+#' @param block_group Grouping variable of each block.
+#' @param size Sample size of each block, from [ck_block_sample_sizes()].
+#' @return An integer permutation of `seq_along(blocks)`.
+#' @keywords internal
+ck_order_blocks_by_size <- function(blocks, block_group, size) {
+  runs <- rle(as.character(block_group))
+  ends <- cumsum(runs$lengths)
+  starts <- ends - runs$lengths + 1L
+
+  perm <- integer(0)
+
+  for (i in seq_along(runs$lengths)) {
+    idx <- starts[i]:ends[i]
+    # idx breaks ties on the original position, so the result is deterministic
+    # and blocks of unknown size fall to the end of their own variable.
+    perm <- c(perm, idx[order(-size[idx], idx, na.last = TRUE)])
+  }
+
+  perm
+}
+
+
 #' Which Group Blocks Actually Have Respondents on This Sheet
 #'
 #' A grouping variable's levels are fixed across the whole table, so a country
@@ -823,8 +985,8 @@ ck_nonempty_blocks <- function(dat, rows, blocks, idx, sample_base = NULL) {
       }
 
       if (length(k) > 0) {
-        v <- suppressWarnings(as.numeric(dat[[b$cols[k[1]]]][rows]))
-        return(any(is.finite(v) & v > 0))
+        n_i <- ck_block_sample_sizes(dat, list(b), sample_base, rows)[1]
+        return(!is.na(n_i) && n_i > 0)
       }
 
       any(vapply(
@@ -864,19 +1026,7 @@ ck_sample_composition <- function(dat, blocks, block_group, sample_base) {
     return(NULL)
   }
 
-  group_n <- vapply(
-    blocks,
-    function(b) {
-      k <- which(b$base_names == sample_base)
-      if (length(k) == 0) {
-        return(NA_real_)
-      }
-      v <- suppressWarnings(as.numeric(dat[[b$cols[k[1]]]]))
-      v <- v[is.finite(v)]
-      if (length(v) == 0) NA_real_ else max(v)
-    },
-    numeric(1)
-  )
+  group_n <- ck_block_sample_sizes(dat, blocks, sample_base)
 
   labels <- vapply(blocks, function(b) b$label, character(1))
   is_overall <- labels == "Overall"
@@ -1020,6 +1170,8 @@ format_my_xlsx_variable_x_group <- function(
   split_by_group_variable = NULL,
   column_map = NULL,
   repeat_overall = TRUE,
+  order_groups_by_n = TRUE,
+  order_groups_per_question = TRUE,
   drop_empty_groups = TRUE,
   short_group_labels = TRUE,
   colour_scale = TRUE,
@@ -1043,6 +1195,12 @@ format_my_xlsx_variable_x_group <- function(
   layout <- match.arg(layout)
   pal <- resolve_mmc_palette(palette)
   pct_fmt <- ck_percent_format(percent_digits)
+
+  # Two files in this project define format_my_xlsx_variable_x_group(), and
+  # source() order silently decides which one wins. This line says which is
+  # actually running - if it is absent from the console, the older definition
+  # loaded after this one and none of the arguments below exist.
+  say("--> format_my_xlsx_variable_x_group [%s]", ck_formatter_build())
 
   # Validate the output path before doing any work - on a large table the
   # workbook takes minutes to build and failing at the end wastes all of it.
@@ -1221,13 +1379,13 @@ format_my_xlsx_variable_x_group <- function(
     )
   }
 
-  # The denominator column: what sample sizes and emptiness are both read from
-  sample_base <- if (is.null(total_columns)) {
-    NULL
-  } else if ("n_total" %in% total_columns) {
-    "n_total"
-  } else {
-    total_columns[length(total_columns)]
+  # The denominator column: what sample sizes, ordering and emptiness are read
+  # from. Resolved off the blocks, not off total_columns alone, so putting the
+  # counts in value_columns does not silently disable all three.
+  sample_base <- ck_denominator_base(blocks, total_columns)
+
+  if (!is.null(sample_base)) {
+    say("--> sample sizes read from the '%s' column of each block", sample_base)
   }
 
   # --- 5. Decide the sheet split ----------------------------------------------
@@ -1264,6 +1422,67 @@ format_my_xlsx_variable_x_group <- function(
   }
   block_group[is.na(block_group)] <- "results"
 
+  # --- 5b. Order the group columns by sample size ----------------------------
+  # Done before the sheet plan, so every index below refers to the final order.
+  if (isTRUE(order_groups_by_n)) {
+    if (is.null(sample_base)) {
+      # Asked for and not done: a message is too easy to miss, and the output
+      # then looks exactly like the unsorted one.
+      warning(
+        "order_groups_by_n is TRUE but there is no count column to sort by, so the group columns are left in table order. Pass total_columns (e.g. c(\"n\", \"n_total\")).",
+        call. = FALSE
+      )
+    } else {
+      size <- ck_block_sample_sizes(dat, blocks, sample_base)
+
+      if (all(is.na(size))) {
+        warning(
+          sprintf(
+            "order_groups_by_n is TRUE but no '%s' column was found inside any group block, so the group columns are left in table order. The blocks hold: %s.",
+            sample_base,
+            paste(
+              unique(unlist(lapply(blocks, function(b) b$base_names))),
+              collapse = ", "
+            )
+          ),
+          call. = FALSE
+        )
+      } else {
+        perm <- ck_order_blocks_by_size(blocks, block_group, size)
+
+        blocks <- blocks[perm]
+        block_group <- block_group[perm]
+        size <- size[perm]
+        overall_idx <- which(vapply(
+          blocks,
+          function(b) identical(b$label, "Overall"),
+          logical(1)
+        ))
+
+        # Print the order that was applied, so a run that silently did nothing
+        # cannot be mistaken for one that worked.
+        shown <- utils::head(which(block_group != "Overall"), 6)
+        say(
+          "--> group columns ordered by %s, largest first: %s%s",
+          sample_base,
+          paste(
+            sprintf(
+              "%s (n=%s)",
+              vapply(blocks[shown], function(b) b$label, character(1)),
+              ifelse(is.na(size[shown]), "?", format(size[shown], trim = TRUE))
+            ),
+            collapse = ", "
+          ),
+          if (length(blocks) - length(overall_idx) > length(shown)) {
+            ", ..."
+          } else {
+            ""
+          }
+        )
+      }
+    }
+  }
+
   # Short group labels for the layouts that show the variable name separately
   for (i in seq_along(blocks)) {
     blocks[[i]]$display <- if (isTRUE(short_group_labels)) {
@@ -1293,6 +1512,7 @@ format_my_xlsx_variable_x_group <- function(
     blocks = blocks,
     block_group = block_group,
     overall_idx = overall_idx,
+    n_index = n_index,
     split_by = split_by,
     repeat_overall = repeat_overall,
     table_sheet_name = table_sheet_name,
@@ -1309,6 +1529,12 @@ format_my_xlsx_variable_x_group <- function(
     gridLines = FALSE,
     tabColour = pal[["navy"]]
   )
+
+  if (isTRUE(order_groups_per_question) && !identical(layout, "blocks")) {
+    say(
+      "--> order_groups_per_question applies to layout = 'blocks' only; these sheets use the shared order"
+    )
+  }
 
   dropped_group_labels <- character(0)
 
@@ -1369,6 +1595,7 @@ format_my_xlsx_variable_x_group <- function(
         block_group = block_group[sh$blocks],
         value_columns = value_columns,
         total_columns = total_columns,
+        order_per_question = order_groups_per_question,
         pal = pal,
         font_name = font_name,
         colour_scale = colour_scale,
@@ -1827,6 +2054,8 @@ ck_write_group_sheet <- function(
 #' @param block_group Grouping variable of each block.
 #' @param value_columns Statistic column prefixes; the first is the one shown.
 #' @param total_columns Count column prefixes.
+#' @param order_per_question Logical. Order each question's groups by its own
+#'   denominator, largest first, instead of following the sheet-wide order.
 #' @param pal Resolved MMC palette.
 #' @param font_name Font used throughout.
 #' @param colour_scale Logical, shade the percentage block of each question.
@@ -1847,6 +2076,7 @@ ck_write_block_sheet <- function(
   total_columns,
   pal,
   font_name,
+  order_per_question = TRUE,
   colour_scale = TRUE,
   max_colour_scale_rules = 250,
   category_width = 46,
@@ -1857,15 +2087,15 @@ ck_write_block_sheet <- function(
 
   # --- Which base statistic goes where ---------------------------------------
   stat_base <- value_columns[1]
-  denom_base <- NULL
   count_base <- NULL
 
+  # The (n=) in each header comes from the denominator wherever it lives, so a
+  # count folded into value_columns still labels the columns.
+  denom_base <- ck_denominator_base(blocks, total_columns)
+
+  # The right-hand count panel is only drawn when the counts were declared as
+  # total_columns - that argument is what says "show these as counts".
   if (length(total_columns) > 0) {
-    denom_base <- if ("n_total" %in% total_columns) {
-      "n_total"
-    } else {
-      total_columns[length(total_columns)]
-    }
     others <- setdiff(total_columns, denom_base)
     count_base <- if (length(others) > 0) others[1] else denom_base
   }
@@ -2049,31 +2279,48 @@ ck_write_block_sheet <- function(
     title <- paste0("VARIABLE: ", q_label)
 
     # Sample size per group for this question
-    head_txt <- character(n_group)
+    denom_q <- rep(NA_real_, n_group)
     for (g in seq_len(n_group)) {
-      lbl <- if (!is.null(blocks[[g]]$display)) {
-        blocks[[g]]$display
-      } else {
-        blocks[[g]]$label
+      if (is.na(denom_cols[g])) {
+        next
       }
 
-      denom <- NA_real_
-      if (!is.na(denom_cols[g])) {
-        v <- suppressWarnings(as.numeric(dat[[denom_cols[g]]][rows_q]))
-        v <- v[is.finite(v)]
-        if (length(v) > 0) denom <- max(v)
-      }
-
-      head_txt[g] <- if (is.finite(denom)) {
-        sprintf(
-          "%s (n=%s)",
-          lbl,
-          format(round(denom), scientific = FALSE, trim = TRUE)
-        )
-      } else {
-        lbl
-      }
+      v <- suppressWarnings(as.numeric(dat[[denom_cols[g]]][rows_q]))
+      v <- v[is.finite(v)]
+      if (length(v) > 0) denom_q[g] <- max(v)
     }
+
+    # This question's own group order. The permutation stays inside each
+    # grouping variable's run, so run_start, run_end and parity below stay
+    # correct as they are: the band merges, the shading and the column widths
+    # are all positional and do not move. Only which block a column draws from
+    # changes. With no denominator to read, ck_order_blocks_by_size() leaves the
+    # order alone.
+    ord <- if (isTRUE(order_per_question)) {
+      ck_order_blocks_by_size(blocks, block_group, denom_q)
+    } else {
+      seq_len(n_group)
+    }
+
+    head_txt <- vapply(
+      seq_len(n_group),
+      function(g) {
+        b <- blocks[[ord[g]]]
+        lbl <- if (!is.null(b$display)) b$display else b$label
+        denom <- denom_q[ord[g]]
+
+        if (is.finite(denom)) {
+          sprintf(
+            "%s (n=%s)",
+            lbl,
+            format(round(denom), scientific = FALSE, trim = TRUE)
+          )
+        } else {
+          lbl
+        }
+      },
+      character(1)
+    )
 
     # --- three header rows, both panels at once ------------------------------
     hdr <- matrix(NA_character_, nrow = 3, ncol = n_col)
@@ -2103,7 +2350,7 @@ ck_write_block_sheet <- function(
       }
       body <- c(
         body,
-        lapply(panels[[p]]$cols, function(j) {
+        lapply(panels[[p]]$cols[ord], function(j) {
           if (is.na(j)) rep(NA_real_, n_r) else dat[[j]][rows_q]
         })
       )
@@ -2197,7 +2444,7 @@ ck_write_block_sheet <- function(
     if (isTRUE(colour_scale) && length(rows_pct) > 1) {
       cf_ranges[[length(cf_ranges) + 1]] <- list(
         rows = rows_pct,
-        cols = left_first + cf_group - 1L
+        cols = left_first + which(ord == cf_group) - 1L
       )
     }
 
@@ -2276,8 +2523,8 @@ ck_write_block_sheet <- function(
 #' @param dropped_groups Group labels left out for having no respondents.
 #' @param readme_text Optional character vector of extra lines.
 #' @param pct_fmt Excel number format for proportions, from
-#'   [ck_percent_format()]. Used both for the sample-composition percentages and
-#'   for the number-format note, so the note cannot drift from the sheets.
+#'   [ck_percent_format()]. Used both for the sample-composition percentages
+#'   and for the number-format note, so the note cannot drift from the sheets.
 #' @return Invisibly `NULL`.
 #' @keywords internal
 ck_write_readme_sheet <- function(
