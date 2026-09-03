@@ -487,7 +487,50 @@ test_that("served, the workbook is built in the session temp folder and offered 
 
       expect_match(ui_text(output$download_control), "Download the results workbook")
       expect_match(ui_text(output$results_status), "Download")
-      expect_match(output$results_summary, "use the download button", fixed = TRUE)
+      expect_match(
+        output$results_summary, "Download using the button above", fixed = TRUE
+      )
+      # The row is named after what happens, not after a choice the user is
+      # not being offered.
+      expect_match(output$results_summary, "Delivery", fixed = TRUE)
+    })
+  })
+})
+
+
+test_that("served, the destination step reads as settled rather than missing", {
+  skip_without_app()
+
+  withr::with_options(list(analysiskit.server = TRUE), {
+    shiny::testServer(app_dir, {
+      # No folder picker, and no heading promising one.
+      expect_equal(trimws(ui_text(output$folder_control)), "")
+      expect_match(ui_text(output$folder_label), "How you get the results")
+      expect_false(grepl("Output folder", ui_text(output$folder_label)))
+
+      # Stated as done, not as a neutral aside, and it says where the button
+      # will be.
+      status <- ui_text(output$folder_status)
+      expect_match(status, "download")
+      expect_match(status, "Results tab")
+      expect_match(status, "status-success")
+
+      # The tracker names the step after what happens here.
+      expect_match(ui_text(output$progress_tracker), "Delivery")
+      expect_false(grepl("Destination", ui_text(output$progress_tracker)))
+    })
+  })
+})
+
+
+test_that("locally, the folder picker and its heading are both present", {
+  skip_without_app()
+
+  withr::with_options(list(analysiskit.server = FALSE), {
+    shiny::testServer(app_dir, {
+      expect_match(ui_text(output$folder_label), "Output folder")
+      expect_match(ui_text(output$folder_control), "Choose folder")
+      expect_match(ui_text(output$progress_tracker), "Destination")
     })
   })
 })

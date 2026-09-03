@@ -85,6 +85,30 @@ test_that("locally, the user picks the folder and nothing is settled for them", 
   expect_match(mode$explanation, "[Cc]hoose the folder")
 })
 
+
+# A step with no control under it is read as a control that failed to appear.
+# The served wording exists to prevent exactly that reading, so it is worth
+# pinning: no heading that promises a folder, a name for what does happen, and
+# a pointer to where the button will be.
+test_that("served, nothing in the destination step promises a folder", {
+  mode <- ak_destination_mode(server = TRUE)
+
+  expect_false(grepl("folder", mode$label, ignore.case = TRUE))
+  expect_equal(mode$step_label, "Delivery")
+  expect_match(mode$explanation, "Results tab")
+  # Presented as complete rather than as a neutral note about something absent.
+  expect_equal(mode$status_type, "success")
+})
+
+
+test_that("locally, the destination step is still named after the choice", {
+  mode <- ak_destination_mode(server = FALSE)
+
+  expect_equal(mode$label, "Output folder")
+  expect_equal(mode$step_label, "Destination")
+  expect_equal(mode$status_type, "neutral")
+})
+
 test_that("the session output folder exists and is writable", {
   path <- ak_session_output_dir()
 

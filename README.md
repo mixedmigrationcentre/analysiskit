@@ -34,7 +34,7 @@ The workflow is five steps, and the app shows you which one you are on:
 | **Dataset** | Upload the 4Mi export. The app reads it and profiles every column. |
 | **List of Analysis** | Upload the workbook that says which analyses to run. |
 | **Checks** | Every check runs automatically, comparing the two files against each other. |
-| **Destination** | Choose the folder to save into (or, on a server, take a download). |
+| **Destination** | Choose the folder to save into. Served, this step is called **Delivery**, settles itself, and the workbook arrives as a download instead. |
 | **Results** | Run the analyses and get the workbook. |
 
 Nothing expensive happens until you press **Run analyses**. Uploading a file
@@ -52,6 +52,12 @@ R 4.1 or later. The app installs what it needs from CRAN on first launch:
 
 Three more are **optional** and are *not* installed for you, because a run only
 reaches them if a workbook asks for them:
+
+| Package | Needed for | Install |
+|---|---|---|
+| `srvyr` | confidence intervals (an analysis row with a `level`) | `install.packages("srvyr")` |
+| `analysistools` | the same | `remotes::install_github("impact-initiatives/analysistools")` |
+| `cleaningtools` | rebuilding select_multiple parent columns | `remotes::install_github("impact-initiatives/cleaningtools")` |
 
 If you never set a `level`, you never need them — the fast tabulation engine
 produces the same point estimates without a survey design.
@@ -229,6 +235,19 @@ One MMC-branded `.xlsx`, styled by `format_my_xlsx_variable_x_group()`:
 - a `readme` sheet recording the dataset, the List of Analysis, the
   disaggregations and every setting that was applied
 
+### Number formats
+
+**Percentages are shown to the nearest whole number**, so
+`66.8039538714992` prints as `67%`. That is a *display* format, not a rounded
+value — the cell still holds every digit. It matters: a column of whole-number
+percentages continues to sum and average correctly, and anyone who needs the
+precision can widen the format in Excel without re-running anything.
+
+Means and medians keep two decimals; counts are whole numbers.
+
+To publish decimals instead, change `percent_digits` in `ak_export_settings()`
+(`R/export_results.R`) — `1` gives `66.8%`.
+
 Named `analysiskit_<dataset>_<YYYYmmdd-HHMMSS>.xlsx`. An existing file is never
 overwritten — a second run in the same second gets a `_1` suffix.
 
@@ -264,6 +283,14 @@ The usual cause is the survey chain. The analysis pipeline calls `srvyr::`,
 and their dependencies — even though a run only reaches them when a workbook asks
 for a confidence level. Deploying pulls them in whether or not you use them.
 
+If you hit `RcppArmadillo [required by survey]`:
+
+```r
+install.packages(c("RcppArmadillo", "srvyr"))
+remotes::install_github("impact-initiatives/analysistools")
+remotes::install_github("impact-initiatives/cleaningtools")
+```
+
 then run `source("R/generate_manifest.R")` again.
 
 ### What gets uploaded
@@ -280,15 +307,20 @@ run nothing.
 
 ### What changes when it is served
 
-**The folder picker is gone.** It browses the filesystem the app is running on —
-served, that is the server's disk, not yours. A file written there is not on your
-computer and disappears when the container recycles.
+**The folder picker is gone, and that is deliberate — not a feature that failed
+to load.** `shinyFiles` browses the filesystem of whatever machine the app is
+running on. Served, that is the server's container, not your computer: a file
+written there never reaches your disk and disappears when the container
+recycles. Offering the picker anyway would lose runs silently.
 
-So on a server the app builds the workbook in a temporary folder and hands it to
-you as a **download** instead. The Destination step settles itself and says why.
+So on a server the app builds the workbook in a per-session temporary folder and
+hands it to you as a **download** instead. The fourth step is renamed
+**Delivery**, marks itself complete, and says where the Download button will
+appear — because a step headed "Output folder" with nothing under it reads as
+broken. Run locally, the picker and the **Destination** step are unchanged.
 
-The app detects this from the environment. If it guesses wrong for a host it does
-not recognise, tell it:
+The app detects which case it is in from the environment. If it guesses wrong for
+a host it does not recognise, tell it:
 
 ```r
 options(analysiskit.server = TRUE)   # or the ANALYSISKIT_SERVER env var

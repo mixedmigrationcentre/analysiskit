@@ -28,8 +28,11 @@
 #   * mergeCells() re-checks every existing merge on each call, so merging a few
 #     thousand header cells one at a time is quadratic. ck_add_merges() appends
 #     non-overlapping ranges straight to the worksheet.
-#   * numFmt uses the built-in ids ("PERCENTAGE" = 10, "NUMBER" = 2, "3") so
-#     openxlsx does not rescan every style object for a free custom numFmtId.
+#   * numFmt uses the built-in ids ("NUMBER" = 2, "3") so openxlsx does not
+#     rescan every style object for a free custom numFmtId. Proportions are the
+#     exception: the built-in "PERCENTAGE" id is fixed at two decimals, so they
+#     use one custom format string built once per workbook by
+#     ck_percent_format() and reused on every cell.
 # =============================================================================
 
 # -----------------------------------------------------------------------------
@@ -395,6 +398,32 @@ ck_body_style <- function(
   args$borderStyle <- bd$borderStyle
 
   do.call(ck_style, args)
+}
+
+
+#' The Excel Number Format for a Percentage
+#'
+#' Percentages are stored as proportions and displayed by Excel's number
+#' format, so the cell keeps its full precision while the sheet shows a rounded
+#' figure. That matters: a column of displayed whole numbers still sums and
+#' averages correctly, which it would not if the stored values had been
+#' truncated on the way in.
+#'
+#' Built as a string rather than using openxlsx's built-in `"PERCENTAGE"` id,
+#' which is fixed at two decimals.
+#'
+#' @param digits Number of decimal places, 0 or more.
+#' @return An Excel number format string, e.g. `"0%"` or `"0.0%"`.
+#' @keywords internal
+ck_percent_format <- function(digits = 0) {
+  digits <- suppressWarnings(as.integer(digits))
+  if (length(digits) != 1 || is.na(digits) || digits < 0) {
+    stop("percent_digits must be a single non-negative whole number.", call. = FALSE)
+  }
+  if (digits == 0) {
+    return("0%")
+  }
+  paste0("0.", strrep("0", digits), "%")
 }
 
 
@@ -952,6 +981,10 @@ ck_sample_composition <- function(dat, blocks, block_group, sample_base) {
 #'   open in Excel).
 #' @param round_digits Optional integer. Round numeric statistic columns before
 #'   writing. Shortens the XML noticeably on very large tables.
+#' @param percent_digits Decimal places shown on proportions. `0` (the default)
+#'   displays `0.668039538714992` as `67%`. This is a display format, so the
+#'   cell keeps its full precision and the figures still add up correctly.
+#'   Means and medians are unaffected; they keep two decimals.
 #' @param hidden_columns Identifier columns to hide on every table sheet.
 #'   Defaults to the first three (machine names and analysis type), which are
 #'   kept in the file but collapsed out of the way. `NULL` shows everything.
@@ -992,6 +1025,7 @@ format_my_xlsx_variable_x_group <- function(
   colour_scale = TRUE,
   max_colour_scale_rules = 250,
   round_digits = NULL,
+  percent_digits = 0,
   hidden_columns = 1:3,
   index_width = 7,
   stat_width = 13,
@@ -1008,6 +1042,7 @@ format_my_xlsx_variable_x_group <- function(
 
   layout <- match.arg(layout)
   pal <- resolve_mmc_palette(palette)
+  pct_fmt <- ck_percent_format(percent_digits)
 
   # Validate the output path before doing any work - on a large table the
   # workbook takes minutes to build and failing at the end wastes all of it.
@@ -1337,7 +1372,8 @@ format_my_xlsx_variable_x_group <- function(
         pal = pal,
         font_name = font_name,
         colour_scale = colour_scale,
-        max_colour_scale_rules = max_colour_scale_rules
+        max_colour_scale_rules = max_colour_scale_rules,
+        pct_fmt = pct_fmt
       )
     } else {
       if (isTRUE(insert_empty_rows)) {
@@ -1361,7 +1397,8 @@ format_my_xlsx_variable_x_group <- function(
         hidden_columns = hidden_columns,
         index_width = index_width,
         stat_width = stat_width,
-        total_width = total_width
+        total_width = total_width,
+        pct_fmt = pct_fmt
       )
     }
   }
@@ -1388,7 +1425,8 @@ format_my_xlsx_variable_x_group <- function(
       character(0)
     },
     dropped_groups = dropped_group_labels,
-    readme_text = readme_text
+    readme_text = readme_text,
+    pct_fmt = pct_fmt
   )
 
   say(
@@ -1433,6 +1471,8 @@ format_my_xlsx_variable_x_group <- function(
 #' @param max_colour_scale_rules Rule ceiling for the colour scale.
 #' @param hidden_columns Identifier columns to hide.
 #' @param index_width,stat_width,total_width Column widths.
+#' @param pct_fmt Excel number format for proportion rows, from
+#'   [ck_percent_format()].
 #' @return Invisibly the number of style objects written.
 #' @keywords internal
 ck_write_group_sheet <- function(
@@ -1449,7 +1489,8 @@ ck_write_group_sheet <- function(
   hidden_columns = 1:3,
   index_width = 7,
   stat_width = 13,
-  total_width = 5
+  total_width = 5,
+  pct_fmt = ck_percent_format(0)
 ) {
   index_cols <- seq_len(n_index)
   block_cols <- unlist(lapply(blocks, function(b) b$cols))
@@ -1607,9 +1648,10 @@ ck_write_group_sheet <- function(
       edges <- c(if (k == 1) "Left", if (k == length(cols_i)) "Right")
 
       # Counts are whole numbers on every row; statistics take the format of
-      # their analysis type. The built-in numFmt ids ("PERCENTAGE" = 10,
-      # "NUMBER" = 2, "3") avoid openxlsx rescanning every style object for a
-      # free custom numFmtId on each addStyle() call.
+      # their analysis type. The built-in numFmt ids ("NUMBER" = 2, "3") avoid
+      # openxlsx rescanning every style object for a free custom numFmtId on
+      # each addStyle() call. Proportions use an explicit format string instead,
+      # because the built-in "PERCENTAGE" id is fixed at two decimals.
       fmt_rows <- if (isTRUE(b$is_total[k])) {
         list(
           `3` = list(
@@ -1618,7 +1660,7 @@ ck_write_group_sheet <- function(
           )
         )
       } else {
-        list(PERCENTAGE = r_pct, NUMBER = r_dec)
+        stats::setNames(list(r_pct, r_dec), c(pct_fmt, "NUMBER"))
       }
 
       for (fmt in names(fmt_rows)) {
@@ -1791,6 +1833,8 @@ ck_write_group_sheet <- function(
 #' @param max_colour_scale_rules Rule ceiling for the colour scale.
 #' @param category_width Width of the category columns.
 #' @param group_width Width of the group value columns.
+#' @param pct_fmt Excel number format for proportion rows, from
+#'   [ck_percent_format()].
 #' @return Invisibly the number of style objects written.
 #' @keywords internal
 ck_write_block_sheet <- function(
@@ -1806,7 +1850,8 @@ ck_write_block_sheet <- function(
   colour_scale = TRUE,
   max_colour_scale_rules = 250,
   category_width = 46,
-  group_width = 14
+  group_width = 14,
+  pct_fmt = ck_percent_format(0)
 ) {
   n_group <- length(blocks)
 
@@ -2120,8 +2165,8 @@ ck_write_block_sheet <- function(
         sh <- parity[g]
 
         if (is.null(p$numfmt)) {
-          for (fmt in c("PERCENTAGE", "NUMBER")) {
-            rr <- if (fmt == "PERCENTAGE") rows_pct else rows_dec
+          for (fmt in c(pct_fmt, "NUMBER")) {
+            rr <- if (identical(fmt, pct_fmt)) rows_pct else rows_dec
             ck_add_rect(
               sg,
               cell_key(sh, edges, fmt, FALSE),
@@ -2230,6 +2275,9 @@ ck_write_block_sheet <- function(
 #' @param hidden_names Names of those columns, used in the notes.
 #' @param dropped_groups Group labels left out for having no respondents.
 #' @param readme_text Optional character vector of extra lines.
+#' @param pct_fmt Excel number format for proportions, from
+#'   [ck_percent_format()]. Used both for the sample-composition percentages and
+#'   for the number-format note, so the note cannot drift from the sheets.
 #' @return Invisibly `NULL`.
 #' @keywords internal
 ck_write_readme_sheet <- function(
@@ -2243,7 +2291,8 @@ ck_write_readme_sheet <- function(
   hidden_columns = integer(0),
   hidden_names = character(0),
   dropped_groups = character(0),
-  readme_text = NULL
+  readme_text = NULL,
+  pct_fmt = ck_percent_format(0)
 ) {
   n_col <- 5L
 
@@ -2334,7 +2383,7 @@ ck_write_readme_sheet <- function(
       fontSize = 11,
       fontColour = pal[["navy"]],
       halign = "center",
-      numFmt = "0.0%",
+      numFmt = pct_fmt,
       border = blue_box$border,
       borderColour = blue_box$borderColour,
       borderStyle = blue_box$borderStyle
@@ -2514,7 +2563,16 @@ ck_write_readme_sheet <- function(
   notes <- rbind(
     c(
       "Number formats",
-      "Proportions as percentages, means and medians to two decimals, counts as whole numbers."
+      paste0(
+        "Proportions as percentages to ",
+        if (identical(pct_fmt, "0%")) {
+          "the nearest whole number"
+        } else {
+          paste0(nchar(pct_fmt) - 3L, " decimal place(s)")
+        },
+        ", means and medians to two decimals, counts as whole numbers. Cells ",
+        "keep their full precision; only the display is rounded."
+      )
     ),
     c(
       "Reading the table",

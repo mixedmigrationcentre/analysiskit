@@ -15,14 +15,22 @@
 
 
 #' The Steps of the Workflow
+#'
+#' The fourth step is the one that changes name with the deployment: locally
+#' the user picks a destination, while served there is nothing to pick and the
+#' step is about how the file reaches them. `ak_destination_mode()` supplies
+#' the label, so the tracker never announces a choice the user is not being
+#' offered.
+#'
+#' @param destination_label Label for the fourth step.
 #' @return A named character vector: step id to label.
 #' @keywords internal
-ak_steps <- function() {
+ak_steps <- function(destination_label = "Destination") {
   c(
     dataset = "Dataset",
     loa = "List of Analysis",
     checks = "Checks",
-    destination = "Destination",
+    destination = destination_label,
     results = "Results"
   )
 }
@@ -134,10 +142,12 @@ ak_can_run <- function(states) {
 #' of the interface that is always on screen.
 #'
 #' @param states A vector from \code{\link{ak_step_states}}.
+#' @param destination_label Label for the destination step, from
+#'   \code{\link{ak_destination_mode}}.
 #' @return A Shiny tag.
 #' @export
-ak_step_tracker <- function(states) {
-  steps <- ak_steps()
+ak_step_tracker <- function(states, destination_label = "Destination") {
+  steps <- ak_steps(destination_label)
 
   symbol <- c(
     todo = "○", active = "●", done = "✓",
