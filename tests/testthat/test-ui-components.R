@@ -207,6 +207,20 @@ test_that("the tracker labels every step", {
   }
 })
 
+test_that("the destination step takes its label from the deployment", {
+  states <- ak_step_states()
+
+  expect_match(
+    as.character(ak_step_tracker(states)), "Destination", fixed = TRUE
+  )
+  # Served there is no destination to choose, so the step is named after what
+  # happens instead. The rest of the tracker is unaffected.
+  served <- as.character(ak_step_tracker(states, "Delivery"))
+  expect_match(served, "Delivery", fixed = TRUE)
+  expect_false(grepl("Destination", served, fixed = TRUE))
+  expect_match(served, "List of Analysis", fixed = TRUE)
+})
+
 test_that("status tones map to the stylesheet's classes", {
   expect_match(as.character(ak_status("x", "success")), "status-success")
   expect_match(as.character(ak_status("x", "warning")), "status-warning")

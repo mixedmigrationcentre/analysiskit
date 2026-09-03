@@ -71,28 +71,45 @@ ak_session_output_dir <- function(create = TRUE) {
 
 #' How the Destination Should Behave Here
 #'
-#' One place that answers all three questions the interface needs: does the
-#' user pick a folder, is the destination already settled, and what should the
-#' step say.
+#' One place that answers everything the interface needs to know: does the user
+#' pick a folder, is the destination already settled, what is this step called,
+#' and what does it say.
+#'
+#' The wording carries more weight than it looks. Served, the folder picker is
+#' absent by design - but a step headed "Output folder" with no control under
+#' it reads as a feature that failed to load rather than one that does not
+#' apply. So the served build names the step after what actually happens,
+#' states the download as a settled fact rather than a neutral aside, and says
+#' where the button will appear.
 #'
 #' @param server Logical. Defaults to \code{\link{ak_is_server}}.
-#' @return A list with `pick_folder`, `settled` and `explanation`.
+#' @return A list with `pick_folder`, `settled`, `label`, `step_label`,
+#'   `status_type` and `explanation`.
 #' @export
 ak_destination_mode <- function(server = ak_is_server()) {
   if (isTRUE(server)) {
     list(
       pick_folder = FALSE,
       settled = TRUE,
+      label = "How you get the results",
+      step_label = "Delivery",
+      # "success", not "neutral": nothing here is pending and nothing is
+      # missing. The step is already complete, and it should look it.
+      status_type = "success",
       explanation = paste0(
-        "Analysis Kit is running on a server, so there is no folder of yours ",
-        "to save into. The results workbook is built here and offered as a ",
-        "download when the run finishes."
+        "Ready - the workbook comes to you as a download. Analysis Kit is ",
+        "running on a server, so it has no folder of yours to save into. When ",
+        "the run finishes, a Download button appears on the Results tab; save ",
+        "the file wherever you like from there."
       )
     )
   } else {
     list(
       pick_folder = TRUE,
       settled = FALSE,
+      label = "Output folder",
+      step_label = "Destination",
+      status_type = "neutral",
       explanation = paste0(
         "Choose the folder to save the results workbook into. It is written ",
         "there as soon as the run finishes."

@@ -78,7 +78,11 @@ ak_export_settings <- function(results, spec) {
     split_by = split_by,
     column_map = results$column_map,
     repeat_overall = TRUE,
-    drop_empty_groups = TRUE
+    drop_empty_groups = TRUE,
+    # MMC house style: percentages are published to the nearest whole number.
+    # Set here rather than left to the formatter's default so the choice is
+    # visible at the point where the app decides how its output looks.
+    percent_digits = 0
   )
 }
 

@@ -65,7 +65,10 @@ ui <- fluidPage(
       ),
       tags$div(
         class = "ak-destination",
-        tags$label(class = "control-label", "Output folder"),
+        # The heading is rendered rather than fixed: served, there is no folder
+        # to pick and "Output folder" over an empty space reads as a broken
+        # control. See ak_destination_mode().
+        uiOutput("folder_label"),
         uiOutput("folder_control"),
         uiOutput("folder_status")
       ),
@@ -250,6 +253,10 @@ server <- function(input, output, session) {
   volumes <- c(Home = path.expand("~"), shinyFiles::getVolumes()())
   shinyFiles::shinyDirChoose(input, "folder", roots = volumes, session = session)
 
+  output$folder_label <- renderUI({
+    tags$label(class = "control-label", destination_mode$label)
+  })
+
   output$folder_control <- renderUI({
     if (!destination_mode$pick_folder) {
       return(tagList())
@@ -279,10 +286,10 @@ server <- function(input, output, session) {
 
   output$folder_status <- renderUI({
     if (!destination_mode$pick_folder) {
-      return(ak_status(destination_mode$explanation))
+      return(ak_status(destination_mode$explanation, destination_mode$status_type))
     }
     if (is.null(output_folder())) {
-      return(ak_status(destination_mode$explanation))
+      return(ak_status(destination_mode$explanation, destination_mode$status_type))
     }
     if (!is.null(folder_problem())) {
       return(ak_status(folder_problem(), "error"))
@@ -343,7 +350,9 @@ server <- function(input, output, session) {
     )
   })
 
-  output$progress_tracker <- renderUI(ak_step_tracker(step_states()))
+  output$progress_tracker <- renderUI(
+    ak_step_tracker(step_states(), destination_mode$step_label)
+  )
 
   output$status <- renderUI({
     if (is.null(input$dataset)) {
@@ -568,9 +577,9 @@ server <- function(input, output, session) {
     if (identical(unname(states[["destination"]]), "active")) {
       return(ak_status("Choose an output folder to enable the run."))
     }
-    if (!destination_mode$pick_folder && ak_can_run(states)) {
-      return(ak_status(destination_mode$explanation))
-    }
+    # Served, the destination step no longer needs a hint here: it is settled,
+    # and its own status sits a few pixels above this. Repeating the same
+    # paragraph twice in a narrow sidebar made it read as an error.
     if (!ak_can_run(states)) {
       return(ak_status("Upload both files and clear any problems to run."))
     }
@@ -747,7 +756,7 @@ server <- function(input, output, session) {
 
     data.frame(
       Measure = c(
-        "Saved as", if (destination_mode$pick_folder) "Folder" else "Location",
+        "Saved as", if (destination_mode$pick_folder) "Folder" else "Delivery",
         "Result rows", "Result columns",
         "Grouping variables", "Selection counts", "Choice combinations",
         "Exclusive combinations", "Excluded choices"
@@ -759,7 +768,7 @@ server <- function(input, output, session) {
         } else if (destination_mode$pick_folder) {
           dirname(saved_path())
         } else {
-          "on the server - use the download button above"
+          "Download using the button above"
         },
         format(nrow(results$combined_results), big.mark = ","),
         format(ncol(results$combined_results), big.mark = ","),
