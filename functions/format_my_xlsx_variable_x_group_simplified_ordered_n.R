@@ -1008,6 +1008,35 @@ ck_nonempty_blocks <- function(dat, rows, blocks, idx, sample_base = NULL) {
 }
 
 
+#' Consecutive Runs of One Value
+#'
+#' Used to break the readme's sample-composition table into one block per
+#' disaggregation variable, so a blank row can be left between them.
+#'
+#' Runs of *consecutive* equal values rather than a split by unique value: the
+#' composition table arrives in block order, and if a variable ever appeared in
+#' two separate stretches, quietly stitching them together would misrepresent
+#' the order the workbook is actually in.
+#'
+#' @param x A vector.
+#' @return A list of integer index vectors, one per run, in order.
+#' @keywords internal
+ck_value_runs <- function(x) {
+  if (length(x) == 0) {
+    return(list())
+  }
+  # NA is a value like any other here; rle() would otherwise start a new run at
+  # every NA and scatter blank rows through the table.
+  key <- as.character(x)
+  key[is.na(key)] <- "NA"
+
+  r <- rle(key)
+  ends <- cumsum(r$lengths)
+  starts <- ends - r$lengths + 1L
+  Map(seq.int, starts, ends)
+}
+
+
 #' Summarise the Sample Composition
 #'
 #' The number of respondents in a group is the largest denominator recorded for
@@ -2739,25 +2768,38 @@ ck_write_readme_sheet <- function(
       st(s$head_num, row, 3:5)
       row <- row + 1L
 
-      first <- row
-      last <- row + nrow(composition$table) - 1L
+      body <- composition$table[, c(
+        "disaggregation",
+        "group",
+        "share",
+        "n",
+        "n_total"
+      )]
 
-      wr(
-        composition$table[, c(
-          "disaggregation",
-          "group",
-          "share",
-          "n",
-          "n_total"
-        )],
-        first
-      )
-      st(s$label, first:last, 1)
-      st(s$key_cell, first:last, 2)
-      st(s$pct, first:last, 3)
-      st(s$count, first:last, 4:5)
+      # One block per disaggregation variable with a blank row between them,
+      # rather than one continuous table. Written block by block so the spacer
+      # rows are never styled: an empty row carrying the table's fills and
+      # borders still reads as a row of the table, which is the opposite of
+      # what the gap is for.
+      runs <- ck_value_runs(composition$table$disaggregation)
 
-      row <- last + 2L
+      for (i in seq_along(runs)) {
+        idx <- runs[[i]]
+        first <- row
+        last <- row + length(idx) - 1L
+
+        wr(body[idx, , drop = FALSE], first)
+        st(s$label, first:last, 1)
+        st(s$key_cell, first:last, 2)
+        st(s$pct, first:last, 3)
+        st(s$count, first:last, 4:5)
+
+        # A blank row between blocks, but not after the last one - the section
+        # that follows already leaves a gap of its own.
+        row <- last + 1L + (i < length(runs))
+      }
+
+      row <- row + 1L
     }
   } else {
     key_value(rbind(c(
